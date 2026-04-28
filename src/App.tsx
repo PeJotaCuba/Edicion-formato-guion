@@ -11,6 +11,9 @@ export default function App() {
   const [scriptData, setScriptData] = useState<RadioScript | null>(null);
   const [error, setError] = useState<string | null>(null);
   
+  // Mobile UI Tab State
+  const [activeTab, setActiveTab] = useState<'input' | 'preview'>('input');
+  
   // Settings state
   const [fontSize, setFontSize] = useState<number>(13);
   const [lineSpacing, setLineSpacing] = useState<number>(1.15);
@@ -61,15 +64,17 @@ export default function App() {
         // Usamos convertToHtml en lugar de extractRawText para no perder los "soft breaks" (Shift+Enter) que puedan traer los documentos.
         const result = await mammoth.convertToHtml({ arrayBuffer });
         
-        // Transformamos los tags HTML clave en saltos de línea y limpiamos el resto.
+        // Transformamos los tags HTML clave en saltos de línea y limpiamos el resto con espacios.
         const text = result.value
+            .replace(/<\/(p|h[1-6]|div|li|tr)>/gi, '\n')
             .replace(/<br\s*[\/]?>/gi, '\n')
-            .replace(/<\/p>/gi, '\n')
-            .replace(/<[^>]+>/g, '')
+            .replace(/<[^>]+>/g, ' ') // Los demás tags se vuelven espacio para no pegar palabras
             .replace(/&nbsp;/g, ' ')
             .replace(/&amp;/g, '&')
             .replace(/&lt;/g, '<')
             .replace(/&gt;/g, '>')
+            .replace(/ {2,}/g, ' ') // Eliminar espacios múltiples
+            .replace(/\n\s*\n/g, '\n') // Colapsar saltos de línea
             .trim();
             
         setInputText(text);
@@ -109,31 +114,48 @@ export default function App() {
   return (
     <div className="bg-slate-100 flex flex-col h-screen overflow-hidden text-slate-800 font-sans">
       {/* Header Navigation */}
-      <header className="bg-white border-b border-slate-300 px-6 py-4 flex justify-between items-center shadow-sm shrink-0 z-20">
-        <div className="flex items-center space-x-3">
-          <div className="bg-indigo-600 p-2 rounded-lg">
-            <Mic className="w-6 h-6 text-white" />
+      <header className="bg-white border-b border-slate-300 px-4 sm:px-6 py-3 sm:py-4 flex flex-col sm:flex-row justify-between items-center shadow-sm shrink-0 z-20 gap-3 sm:gap-0">
+        <div className="flex items-center space-x-2 sm:space-x-3 w-full sm:w-auto justify-center sm:justify-start">
+          <div className="bg-indigo-600 p-1.5 sm:p-2 rounded-lg shrink-0">
+            <Mic className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
           </div>
-          <h1 className="text-xl font-bold tracking-tight text-slate-900 uppercase">Editor Técnico de Radio Pro</h1>
+          <h1 className="text-sm sm:text-xl font-bold tracking-tight text-slate-900 uppercase text-center sm:text-left">Editor Técnico de Radio Pro</h1>
         </div>
-        <div className="flex items-center space-x-4">
+        <div className="flex items-center space-x-4 w-full sm:w-auto justify-center sm:justify-end">
           {scriptData && (
-            <span className="text-xs font-semibold text-slate-500 uppercase tracking-widest hidden sm:inline-block">Documento: Guion_Formateado.docx</span>
+            <span className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-widest hidden md:inline-block">Documento: Guion_Formateado.docx</span>
           )}
           <button 
             onClick={handleDownload}
             disabled={!scriptData}
-            className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed text-white px-5 py-2 rounded font-bold text-sm flex items-center shadow-md transition-colors"
+            className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed text-white w-full sm:w-auto px-4 sm:px-5 py-2 rounded font-bold text-xs sm:text-sm flex items-center justify-center shadow-md transition-colors"
           >
-            <Download className="w-4 h-4 mr-2" />
-            DESCARGAR .DOCX
+            <Download className="w-4 h-4 mr-2 shrink-0" />
+            <span>DESCARGAR</span><span className="hidden sm:inline">&nbsp;.DOCX</span>
           </button>
         </div>
       </header>
 
-      <main className="flex-1 flex overflow-hidden">
+      <main className="flex-1 flex flex-col md:flex-row overflow-hidden">
+        
+        {/* Mobile Tabs */}
+        <div className="md:hidden flex bg-slate-200 p-2 shrink-0 space-x-2">
+          <button 
+            className={`flex-1 py-2 text-[10px] font-bold uppercase rounded shadow-sm ${activeTab === 'input' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-500'}`}
+            onClick={() => setActiveTab('input')}
+          >
+            Entrar Datos
+          </button>
+          <button 
+             className={`flex-1 py-2 text-[10px] font-bold uppercase rounded shadow-sm ${activeTab === 'preview' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-500'}`}
+             onClick={() => setActiveTab('preview')}
+          >
+             Vista Previa
+          </button>
+        </div>
+
         {/* Input Area */}
-        <section className="w-1/3 min-w-[320px] max-w-[500px] border-r border-slate-300 bg-slate-50 flex flex-col z-10 overflow-y-auto">
+        <section className={`w-full md:w-1/3 md:min-w-[320px] md:max-w-[500px] border-b md:border-b-0 md:border-r border-slate-300 bg-slate-50 flex-col z-10 overflow-y-auto ${activeTab === 'input' ? 'flex' : 'hidden md:flex'}`}>
           <div className="p-4 border-b border-slate-200 bg-slate-100 flex justify-between items-center shrink-0">
             <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">Entrada & Configuración</span>
             <button 
@@ -247,7 +269,7 @@ export default function App() {
         </section>
 
         {/* Preview Area */}
-        <section className="flex-1 bg-white flex flex-col relative">
+        <section className={`flex-1 bg-white flex-col relative ${activeTab === 'preview' ? 'flex' : 'hidden md:flex'}`}>
           <div className="absolute top-4 right-6 p-2 z-10">
             <span className="bg-indigo-100 text-indigo-800 text-[10px] font-bold px-2 py-1 rounded border border-indigo-200 shadow-sm">
                {scriptData ? `VISTA PREVIA DE FORMATO ARIAL ${fontSize}PT` : 'VISTA PREVIA'}
