@@ -349,7 +349,7 @@ export default function App() {
       </main>
 
       {/* Footer Status Bar */}
-      <footer className="bg-slate-900 text-slate-400 py-2 px-6 flex justify-between items-center text-[10px] sm:text-[11px] font-mono shrink-0 z-20">
+      <footer className="bg-slate-900 text-slate-400 py-2 px-4 sm:px-6 flex justify-between items-center text-[10px] sm:text-[11px] font-mono shrink-0 z-20">
         <div className="flex space-x-4 sm:space-x-6 overflow-x-auto whitespace-nowrap hide-scrollbar">
           <span className="flex items-center"><span className="w-2 h-2 bg-green-500 rounded-full mr-2"></span>SISTEMA ACTIVO</span>
           <span>CARACTERES: {inputText.length}</span>

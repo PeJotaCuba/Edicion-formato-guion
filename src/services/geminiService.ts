@@ -1,6 +1,17 @@
 import { GoogleGenAI, Type } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+let aiInstance: GoogleGenAI | null = null;
+
+function getAi(): GoogleGenAI {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("Clave de API de Gemini no configurada. Por favor, añada la variable de entorno GEMINI_API_KEY en Vercel y vuelva a desplegar.");
+  }
+  if (!aiInstance) {
+    aiInstance = new GoogleGenAI({ apiKey });
+  }
+  return aiInstance;
+}
 
 export interface RadioScript {
   credits: {
@@ -70,7 +81,7 @@ ${inputText}`;
     required: ["credits", "body"]
   };
 
-  const response = await ai.models.generateContent({
+  const response = await getAi().models.generateContent({
     model: "gemini-2.5-pro",
     contents: prompt,
     config: {
