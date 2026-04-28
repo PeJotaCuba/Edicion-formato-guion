@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { Download, Loader2, Mic, RotateCcw, Sparkles, FileText, Upload, Settings } from 'lucide-react';
-import { generateRadioScriptJson, RadioScript } from './services/geminiService';
 import { generateRadioScriptDocx } from './services/docxService';
+import { RadioScript } from './services/geminiService';
 import * as mammoth from 'mammoth';
 import { parseScriptLocally } from './services/localParser';
 import { normalizeScriptNumbering } from './services/normalizeService';
@@ -36,15 +36,13 @@ export default function App() {
     setError(null);
 
     try {
-      // 1. Intentar el parsing local primero
+      // Intentar el parsing local
       const localParsedData = parseScriptLocally(textToProcess);
       
       if (localParsedData) {
           setScriptData(normalizeScriptNumbering(localParsedData));
       } else {
-          // 2. IA parsing
-          const data = await generateRadioScriptJson(textToProcess);
-          setScriptData(normalizeScriptNumbering(data));
+          throw new Error("No se pudo extraer el contenido. Revise el archivo.");
       }
     } catch (err: any) {
       console.error(err);

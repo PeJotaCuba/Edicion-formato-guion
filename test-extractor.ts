@@ -1,3 +1,13 @@
 import WordExtractor from 'word-extractor';
-console.log("WordExtractor type:", typeof WordExtractor);
-console.log("WordExtractor keys:", Object.keys(WordExtractor));
+import * as fs from 'fs';
+
+async function test() {
+  try {
+    const extractor = new WordExtractor();
+    const doc = await extractor.extract(Buffer.from('hello'));
+    console.log("Extracted:", doc.getBody());
+  } catch (err: any) {
+    console.error("Error:", err.message);
+  }
+}
+test();

@@ -138,13 +138,19 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
         }
         
         // Párrafo de continuación (si pertenece a la intervención anterior)
-        if (!parsingCredits && body.length > 0) {
-            body[body.length - 1].text.push(p);
+        if (!parsingCredits) {
+            if (body.length > 0) {
+                body[body.length - 1].text.push(p);
+            } else {
+               body.push({
+                   type: 'speaker',
+                   identifier: '',
+                   speakerName: 'LOCUTOR',
+                   text: [p]
+               });
+            }
         }
     }
-    
-    // Si no encontramos nada valido, devolvemos null
-    if (!foundValidContent) return null;
     
     // Normalizar créditos elementales (Reemplazos comunes)
     let emisoraEncontrada = false;
