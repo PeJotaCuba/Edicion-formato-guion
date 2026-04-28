@@ -4,6 +4,19 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
     // Dividir por líneas y descartar vacías
     const paragraphs = inputText.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
     
+    // First pass: Identify dynamic speaker names that are numbered explicitly or known
+    const knownSpeakers = new Set<string>(['LOC', 'LOCUTOR', 'LOCUTORA', 'PERIODISTA', 'ANIMADOR', 'ANIMADORA']);
+    for (const p of paragraphs) {
+        const docNameMatch = p.match(/^[\(]?(\d+)[\)]?[\s.-]*([^:.]+)[.:]+\s*(.*)$/i);
+        if (docNameMatch) {
+            const name = docNameMatch[2].trim().toUpperCase();
+            // Evitar que agarre párrafos grandes por error
+            if (name.length < 25) {
+                knownSpeakers.add(name);
+            }
+        }
+    }
+
     const credits: {label: string, value: string}[] = [];
     const body: any[] = [];
     
@@ -11,53 +24,115 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
     let foundValidContent = false;
     
     for (const p of paragraphs) {
-        // Omitir números de página sueltos (ej. "1", "2") escaneados por error en encabezados.
-        if (/^(?:P\u00e1gina\s*)?\d+$/i.test(p)) {
+        // Omitir números de página sueltos
+        if (/^(?:P\u00e1gina|Page\s*)?\d+$/i.test(p)) {
             continue;
         }
 
-        // Matcher para sonido: Ej. "I SON ENTRA TEMA..." o "XII SON: SUBE CIERRE..."
-        const soundMatch = p.match(/^([IVXLCDM]+)[\s.:]+(SON)\b[^\w]*(.*)$/i);
+        // Matcher para sonido: OJO, no exigimos dos puntos aquí para hacerlo robusto
+        const soundMatch = p.match(/^[\(]?([IVXLCDM]*|[\d]*)[\)]?[\s.:]*(SON|SONIDO|OP|EFECTO|MÚSICA)\b[^\w]*(.*)$/i);
         if (soundMatch) {
             parsingCredits = false;
             foundValidContent = true;
+            let id = soundMatch[1] || "";
+            let remainingText = soundMatch[3].trim();
+            // A veces accidentalmente capturan el "SON" en el result [3] si hubo espacio antes
             body.push({
                 type: 'sound',
-                identifier: soundMatch[1].toUpperCase(),
-                text: [soundMatch[3].trim()]
+                identifier: id.toUpperCase(),
+                text: [remainingText]
             });
             continue;
         }
         
-        // Matcher para locutores: Ej. "01 SILVIA: (AMENO) Buenas noches..." o "12 SILVIA: Remanso..."
-        const speakerMatch = p.match(/^(\d+)[\s.-]+([^:]+):\s*(?:\(([^)]+)\))?\s*(.*)$/i);
-        if (speakerMatch) {
-            parsingCredits = false;
-            foundValidContent = true;
-            body.push({
-                type: 'speaker',
-                identifier: speakerMatch[1],
-                speakerName: speakerMatch[2].trim().toUpperCase(),
-                intention: speakerMatch[3] ? speakerMatch[3].trim().toUpperCase() : undefined,
-                text: [speakerMatch[4].trim()]
-            });
-            continue;
+        let handledSpeaker = false;
+        let isSpeaker = false;
+        let id = "";
+        let name = "";
+        let intention = "";
+        let textExtracted = "";
+
+        // Attempt format 1: explicitly has colon/dot acting as separator for a short name
+        const colonMatch = p.match(/^[\(]?(\d*)[\)]?[\s.-]*([A-ZÁÉÍÓÚÑa-záéíóúñ0-9\s]{1,30})[.:]+\s*(?:\(([^)]+)\))?\s*(.*)$/i);
+        if (colonMatch) {
+            id = colonMatch[1];
+            name = colonMatch[2].trim().toUpperCase();
+            intention = colonMatch[3] ? colonMatch[3].trim().toUpperCase() : "";
+            textExtracted = colonMatch[4].trim();
+            isSpeaker = true;
+        } else {
+            // Attempt format 2: No colon, but explicit number + known speaker
+            const noColonMatch = p.match(/^[\(]?(\d+)[\)]?[\s.-]*([A-ZÁÉÍÓÚÑa-záéíóúñ]{2,15})\b\s*(?:\(([^)]+)\))?\s*(.*)$/i);
+            if (noColonMatch) {
+                let tempName = noColonMatch[2].trim().toUpperCase();
+                // Only consider it a speaker without a colon if it's a known speaker
+                if (knownSpeakers.has(tempName)) {
+                    id = noColonMatch[1];
+                    name = tempName;
+                    intention = noColonMatch[3] ? noColonMatch[3].trim().toUpperCase() : "";
+                    textExtracted = noColonMatch[4].trim();
+                    isSpeaker = true;
+                }
+            } else {
+                // Attempt format 3: No number, no colon, but STARTS EXACTLY with a known speaker
+                // We order them by length so 'LOCUTOR' matches before 'LOC'
+                const knownArray = Array.from(knownSpeakers).sort((a,b)=>b.length-a.length).join('|');
+                if (knownArray.length > 0) {
+                    const knownMatch = p.match(new RegExp(`^(${knownArray})\\b\\s*(?:\\(([^)]+)\\))?\\s*(.*)$`, 'i'));
+                    if (knownMatch) {
+                        id = "";
+                        name = knownMatch[1].trim().toUpperCase();
+                        intention = knownMatch[2] ? knownMatch[2].trim().toUpperCase() : "";
+                        textExtracted = knownMatch[3].trim();
+                        isSpeaker = true;
+                    }
+                }
+            }
         }
         
-        // Matcher para créditos: Ej. "EMISORA: CMKX RADIO BAYAMO"
+        if (isSpeaker) {
+            if (parsingCredits && !id && name.match(/^(EMISORA|PROGRAMA|FECHA|ESCRIBE|ASESOR|ASESORA|DIRIGE|DIRECTOR|TEMA|REALIZADOR|LOCUTOR|LOCUTORA)$/)) {
+                // It's a credit, skip doing speaker logic
+            } else if (parsingCredits && !id && name.length > 20) {
+                // Or another stray text
+            } else {
+                parsingCredits = false;
+                foundValidContent = true;
+                if (id.length === 1) id = '0' + id;
+                
+                body.push({
+                    type: 'speaker',
+                    identifier: id, // El id puede estar vacio, normalizeService lo llenará
+                    speakerName: name,
+                    intention: intention || undefined,
+                    text: [textExtracted]
+                });
+                
+                handledSpeaker = true;
+                continue;
+            }
+        }
+        
+        if (handledSpeaker) continue;
+
+        // Matcher para créditos
         if (parsingCredits) {
-            const creditMatch = p.match(/^([^:]+):\s*(.*)$/i);
-            // Limitamos a etiquetas cortas para no confundir con texto normal de parlamento
+            const creditMatch = p.match(/^([a-zA-ZÁÉÍÓÚáéíóúñÑ\s]+):\s*(.*)$/i);
+            const kwMatch = p.match(/^(EMISORA|PROGRAMA|FECHA|ESCRIBE|ASESOR|ASESORA|DIRIGE|DIRECTOR|TEMA|REALIZADOR(?: DE SONIDO| DE SONIDOS)?|LOC|LOCUTOR|LOCUTORA)\b\s*(.*)$/i);
+
             if (creditMatch && creditMatch[1].length < 40) {
-                // Si la etiqueta existe ya (por si se duplicó), no hacemos push a menos que sea diferente, pero para mantenerlo fiel:
                 credits.push({
                     label: creditMatch[1].trim().toUpperCase(),
                     value: creditMatch[2].trim()
                 });
                 continue;
+            } else if (kwMatch) {
+                credits.push({
+                    label: kwMatch[1].trim().toUpperCase(),
+                    value: kwMatch[2].trim()
+                });
+                continue;
             } else {
-                // Al encontrar un texto no reconocible como crédito en la zona superior, lo ignoramos 
-                // asumiendo que pueden ser subtítulos o restos sin formato. Seguimos buscando hasta un Locutor o Sonido.
                 continue; 
             }
         }
@@ -68,14 +143,44 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
         }
     }
     
-    // Solo si encontramos al menos un patrón de guion de radio válido (Locutor o Sonido), devolverlo.
-    // Si no, devolvemos null para forzar que sea analizado y adaptado por la IA.
+    // Si no encontramos nada valido, devolvemos null
     if (!foundValidContent) return null;
     
+    // Normalizar créditos elementales (Reemplazos comunes)
+    let emisoraEncontrada = false;
+    credits.forEach(c => {
+        if (c.label === 'REALIZADOR DE SONIDOS' || c.label === 'REALIZADOR') c.label = 'REALIZADOR DE SONIDO';
+        if (c.label === 'FECHA') c.label = 'FECHA DE TRANSMISIÓN';
+        if (c.label === 'EMISORA') {
+            emisoraEncontrada = true;
+            if (c.value.toUpperCase().includes('RADIO CIUDAD MONUMENTO') && !c.value.toUpperCase().includes('CMNL')) {
+                c.value = 'CMNL RADIO CIUDAD MONUMENTO';
+            } else if (!c.value || c.value.trim() === '_________________________') {
+                c.value = 'CMNL RADIO CIUDAD MONUMENTO';
+            } else if (c.value.toUpperCase() === 'RADIO CIUDAD MONUMENTO') {
+                c.value = 'CMNL RADIO CIUDAD MONUMENTO';
+            }
+        }
+    });
+
+    if (!emisoraEncontrada) {
+        // Find if any label or value mentions 'RADIO CIUDAD MONUMENTO'
+        const hasMention = credits.some(c => 
+            c.label.toUpperCase().includes('RADIO CIUDAD MONUMENTO') || 
+            c.value.toUpperCase().includes('RADIO CIUDAD MONUMENTO')
+        );
+        if (hasMention) {
+             credits.unshift({ label: 'EMISORA', value: 'CMNL RADIO CIUDAD MONUMENTO' });
+        } else {
+             // as requested: "SI NO ESTA LO PONES SIEMPRE ARRIBA"
+             credits.unshift({ label: 'EMISORA', value: 'CMNL RADIO CIUDAD MONUMENTO' });
+        }
+    }
+
     // Si faltan etiquetas elementales, se inyectan en blanco por protocolo
     const baseLabels = ['EMISORA', 'PROGRAMA', 'REALIZADOR DE SONIDO', 'FECHA DE TRANSMISIÓN'];
     for (const req of baseLabels) {
-        if (!credits.find(c => c.label === req)) {
+        if (!credits.find(c => c.label.includes(req))) {
             credits.push({ label: req, value: '_________________________' });
         }
     }

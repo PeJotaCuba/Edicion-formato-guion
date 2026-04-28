@@ -4,6 +4,9 @@ import { generateRadioScriptJson, RadioScript } from './services/geminiService';
 import { generateRadioScriptDocx } from './services/docxService';
 import * as mammoth from 'mammoth';
 import { parseScriptLocally } from './services/localParser';
+import { normalizeScriptNumbering } from './services/normalizeService';
+
+import { extractDoc } from './services/docExtractor';
 
 export default function App() {
   const [inputText, setInputText] = useState('');
@@ -19,24 +22,29 @@ export default function App() {
   const [lineSpacing, setLineSpacing] = useState<number>(1.15);
   const [paragraphSpacing, setParagraphSpacing] = useState<number>(6);
 
+  // Conversion flow states
+  const [showDocPrompt, setShowDocPrompt] = useState(false);
+  const [isConvertingDoc, setIsConvertingDoc] = useState(false);
+  const [docConversionSuccess, setDocConversionSuccess] = useState(false);
+  const [pendingDocFile, setPendingDocFile] = useState<File | null>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleGenerate = async () => {
-    if (!inputText.trim()) return;
-    
+  const processScriptText = async (textToProcess: string) => {
+    if (!textToProcess.trim()) return;
     setIsProcessing(true);
     setError(null);
 
     try {
-      // 1. Intentar el parsing local primero (sin depender de IA) para no alterar ningún texto
-      const localParsedData = parseScriptLocally(inputText);
+      // 1. Intentar el parsing local primero
+      const localParsedData = parseScriptLocally(textToProcess);
       
       if (localParsedData) {
-          setScriptData(localParsedData);
+          setScriptData(normalizeScriptNumbering(localParsedData));
       } else {
-          // 2. Si no tiene forma de guion, entonces recurrir a la IA para inferirlo y crear la estructura
-          const data = await generateRadioScriptJson(inputText);
-          setScriptData(data);
+          // 2. IA parsing
+          const data = await generateRadioScriptJson(textToProcess);
+          setScriptData(normalizeScriptNumbering(data));
       }
     } catch (err: any) {
       console.error(err);
@@ -44,6 +52,10 @@ export default function App() {
     } finally {
       setIsProcessing(false);
     }
+  };
+
+  const handleGenerate = async () => {
+    await processScriptText(inputText);
   };
 
   const handleClear = () => {
@@ -59,34 +71,108 @@ export default function App() {
     const file = event.target.files?.[0];
     if (!file) return;
 
+    setError(null);
+
+    const isLegacyDoc = file.name.toLowerCase().endsWith('.doc') || file.type === 'application/msword';
+    
+    if (isLegacyDoc) {
+      setPendingDocFile(file);
+      setShowDocPrompt(true);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+
+    // Proceso normal para .docx
     try {
         const arrayBuffer = await file.arrayBuffer();
-        // Usamos convertToHtml en lugar de extractRawText para no perder los "soft breaks" (Shift+Enter) que puedan traer los documentos.
         const result = await mammoth.convertToHtml({ arrayBuffer });
         
-        // Transformamos los tags HTML clave en saltos de línea y limpiamos el resto con espacios.
         const text = result.value
             .replace(/<\/(p|h[1-6]|div|li|tr)>/gi, '\n')
             .replace(/<br\s*[\/]?>/gi, '\n')
-            .replace(/<[^>]+>/g, ' ') // Los demás tags se vuelven espacio para no pegar palabras
+            .replace(/<[^>]+>/g, ' ')
             .replace(/&nbsp;/g, ' ')
             .replace(/&amp;/g, '&')
             .replace(/&lt;/g, '<')
             .replace(/&gt;/g, '>')
-            .replace(/ {2,}/g, ' ') // Eliminar espacios múltiples
-            .replace(/\n\s*\n/g, '\n') // Colapsar saltos de línea
+            .replace(/ {2,}/g, ' ')
+            .replace(/\n\s*\n/g, '\n')
             .trim();
+            
+        if (text.length < 20) {
+            throw new Error("El archivo no contenía texto legible o está dañado.");
+        }
             
         setInputText(text);
         
-        // Reset file input para permitir subir el mismo archivo después de limpiarlo
         if (fileInputRef.current) {
             fileInputRef.current.value = '';
         }
     } catch (err) {
-        console.error("Error reading file:", err);
-        setError("Error al leer el archivo .docx. Asegúrese de que sea un formato válido.");
+        console.error("Error reading docx:", err);
+        setError("Error al leer el archivo. Asegúrese de que sea un archivo .docx de Word válido y no esté corrupto.");
     }
+  };
+
+  const executeDocConversion = async () => {
+    if (!pendingDocFile) return;
+    
+    setIsConvertingDoc(true);
+    setError(null);
+    try {
+      const formData = new FormData();
+      formData.append("file", pendingDocFile);
+
+      const response = await fetch("/api/extract-doc", {
+        method: "POST",
+        body: formData
+      });
+
+      if (!response.ok) {
+        let errorMsg = "Error en la conversión del documento server-side";
+        try {
+           const errData = await response.json();
+           if (errData.error) errorMsg = errData.error;
+        } catch(e) {}
+        throw new Error(errorMsg);
+      }
+
+      const data = await response.json();
+      const text = data.text;
+      
+      let cleanedText = text
+            .replace(/[ \t]{2,}/g, ' ')
+            .replace(/\n[ \t]+/g, '\n')
+            .replace(/\n\s*\n/g, '\n')
+            .trim();
+
+      if (cleanedText.length < 20) {
+        throw new Error("El archivo no contenía texto legible o está dañado.");
+      }
+
+      setInputText(cleanedText);
+      setIsConvertingDoc(false);
+      setDocConversionSuccess(true);
+      setPendingDocFile(null);
+      
+      setTimeout(() => {
+         setDocConversionSuccess(false);
+         setShowDocPrompt(false);
+         processScriptText(cleanedText);
+      }, 2500);
+
+    } catch (err: any) {
+      console.error("Error convirtiendo doc:", err);
+      setError(`Fallo al convertir internamente el .doc: ${err.message}`);
+      setIsConvertingDoc(false);
+      setShowDocPrompt(false);
+      setPendingDocFile(null);
+    }
+  };
+
+  const abortDocConversion = () => {
+    setShowDocPrompt(false);
+    setPendingDocFile(null);
   };
 
   const handleDownload = async () => {
@@ -113,13 +199,67 @@ export default function App() {
 
   return (
     <div className="bg-slate-100 flex flex-col h-screen overflow-hidden text-slate-800 font-sans">
+      
+      {/* Doc Conversion Modal */}
+      {showDocPrompt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-lg shadow-2xl max-w-sm w-full p-6 text-center transform transition-all">
+            {!docConversionSuccess ? (
+               <>
+                 <div className="flex justify-center mb-4">
+                   {isConvertingDoc ? (
+                     <Loader2 className="w-12 h-12 text-indigo-600 animate-spin" />
+                   ) : (
+                     <FileText className="w-12 h-12 text-orange-500" />
+                   )}
+                 </div>
+                 <h2 className="text-lg font-bold text-slate-800 mb-2 uppercase">
+                   {isConvertingDoc ? 'Convirtiendo...' : 'Archivo antiguo detectado'}
+                 </h2>
+                 <p className="text-sm text-slate-600 mb-6">
+                   {isConvertingDoc 
+                     ? 'Por favor, espere mientras procesamos y extraemos el contenido del documento .doc internamente.'
+                     : 'Se ha cargado un archivo formato .doc (Word antiguo). Es necesario convertirlo internamente para poder procesarlo correctamente.'}
+                 </p>
+                 {!isConvertingDoc && (
+                   <div className="flex justify-center space-x-3">
+                     <button 
+                       onClick={abortDocConversion}
+                       className="px-4 py-2 border border-slate-300 rounded font-bold text-xs text-slate-600 hover:bg-slate-50 transition-colors uppercase"
+                     >
+                       Cancelar
+                     </button>
+                     <button 
+                       onClick={executeDocConversion}
+                       className="px-4 py-2 bg-indigo-600 rounded font-bold text-xs text-white hover:bg-indigo-700 shadow-md transition-colors uppercase"
+                     >
+                       Convertir
+                     </button>
+                   </div>
+                 )}
+               </>
+            ) : (
+               <>
+                 <div className="flex justify-center mb-4">
+                   <div className="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center">
+                     <Sparkles className="w-6 h-6 text-green-600" />
+                   </div>
+                 </div>
+                 <h2 className="text-lg font-bold text-slate-800 mb-2 uppercase">¡Conversión Exitosa!</h2>
+                 <p className="text-sm text-slate-600">El guion está listo para ser procesado.</p>
+               </>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Header Navigation */}
       <header className="bg-white border-b border-slate-300 px-4 sm:px-6 py-3 sm:py-4 flex flex-col sm:flex-row justify-between items-center shadow-sm shrink-0 z-20 gap-3 sm:gap-0">
         <div className="flex items-center space-x-2 sm:space-x-3 w-full sm:w-auto justify-center sm:justify-start">
           <div className="bg-indigo-600 p-1.5 sm:p-2 rounded-lg shrink-0">
             <Mic className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
           </div>
-          <h1 className="text-sm sm:text-xl font-bold tracking-tight text-slate-900 uppercase text-center sm:text-left">Editor Técnico de Radio Pro</h1>
+          <h1 className="text-sm sm:text-xl font-bold tracking-tight text-slate-900 uppercase text-center sm:text-left">GuionFormat</h1>
         </div>
         <div className="flex items-center space-x-4 w-full sm:w-auto justify-center sm:justify-end">
           {scriptData && (
@@ -173,7 +313,7 @@ export default function App() {
                 <div>
                    <input 
                      type="file" 
-                     accept=".docx" 
+                     accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" 
                      ref={fileInputRef}
                      onChange={handleFileUpload} 
                      className="hidden" 
@@ -184,7 +324,7 @@ export default function App() {
                      className="cursor-pointer bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded text-xs font-bold uppercase tracking-wider flex items-center shadow-sm transition-colors"
                    >
                      <Upload className="w-4 h-4 mr-2" />
-                     CARGAR DOCX
+                     CARGAR DOCX / DOC
                    </label>
                 </div>
             </div>
@@ -308,7 +448,7 @@ export default function App() {
                       if (item.type === 'sound') {
                          const paragraphs = item.text || [];
                          return paragraphs.map((p, idx) => {
-                             const cleanText = idx === 0 ? p.replace(/^(?:SON\s*:?\s*)+/i, '').trim() : p;
+                             const cleanText = idx === 0 ? p.replace(/^(?:SON|OP)\s*:?\s*/i, '').trim() : p;
                              return (
                                <div key={`${i}-${idx}`} style={{ paddingLeft: '2cm', textIndent: idx === 0 ? '-2cm' : '0' }}>
                                  {idx === 0 && <span className="font-bold uppercase">{item.identifier} SON </span>}

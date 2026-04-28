@@ -34,8 +34,8 @@ export async function generateRadioScriptDocx(scriptData: RadioScript, settings:
                 let cleanText = pText;
                 
                 if (isFirst) {
-                    // Prevenir la duplicación de la palabra "SON" removiéndola si logró filtrarse con espacios y/o dos puntos.
-                    cleanText = cleanText.replace(/^(?:SON\s*:?\s*)+/i, '').trim();
+                    // Prevenir la duplicación de la palabra "SON" o "OP" removiéndola si logró filtrarse con espacios y/o dos puntos.
+                    cleanText = cleanText.replace(/^(?:SON|OP)\s*:?\s*/i, '').trim();
                     runs.push(new TextRun({ text: `${item.identifier} SON `, bold: true }));
                 }
                 

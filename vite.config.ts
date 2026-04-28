@@ -14,8 +14,8 @@ export default defineConfig(({mode}) => {
         registerType: 'autoUpdate',
         includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'masked-icon.svg'],
         manifest: {
-          name: 'Editor de Guiones de Radio',
-          short_name: 'RadioEditor',
+          name: 'GuionFormat',
+          short_name: 'GuionFormat',
           description: 'Editor técnico de guiones de radio',
           theme_color: '#ffffff',
           icons: [

@@ -31,16 +31,27 @@ export async function generateRadioScriptJson(inputText: string): Promise<RadioS
   const prompt = `Actúa como un Experto en Edición de Guiones de Radio. Tu tarea es transformar el siguiente texto o documento en un guion técnico de radio profesional.
 
 REGLAS DE FORMATO Y ESTILO:
-1. Encabezado (Créditos): Deben estar presentes las etiquetas sugeridas (EMISORA, PROGRAMA, ESCRIBE, DIRECTOR, REALIZADOR DE SONIDO, FECHA DE TRANSMISIÓN) y cualquier otra relevante que detectes.
+1. Encabezado (Créditos / Frontis): DEBE contener EXACTAMENTE estas etiquetas de orden y sin omisiones:
+EMISORA
+PROGRAMA
+FECHA
+TEMA
+ESCRITOR (A)
+ASESOR (A)
+DIRECTOR (A)
+REALIZADOR DE SONIDOS (A)
+LOCUTOR (A)
+IMPORTANTE SOBRE EMISORA: El nombre de la emisora SIEMPRE debe ser "CMNL RADIO CIUDAD MONUMENTO". Si el texto original dice solo "Radio Ciudad Monumento" o no menciona la emisora, complétala siempre a "CMNL RADIO CIUDAD MONUMENTO" al principio de los créditos.
+Si falta información para el resto, déjala en blanco (como "_________________________").
 2. Intervenciones:
-  - Locutores: Numerados secuencialmente (01, 02, 03...). Infiera los locutores si no existen.
-  - El nombre del locutor va en MAYÚSCULAS y las intenciones (ej. ALEGRE, SUGERENTE) van entre paréntesis en MAYÚSCULAS y justo después del nombre.
-  - Efectos/Música (Sonido): Numerados en romanos seguidos de la etiqueta SON (ej. I SON, II SON).
+  - Locutores: Numerados secuencialmente y siempre empezando por 01, 02, 03, etc. INFIERA LOS NÚMEROS Y CORRÍGELOS si están saltados o faltan.
+  - El nombre del locutor va en MAYÚSCULAS y las intenciones (ej. ALEGRE, SUGERENTE) van entre paréntesis en MAYÚSCULAS y extraídas al campo "intention" en el JSON, sin unirlas al nombre.
+  - Efectos/Música (Sonido): Numerados en romanos seguidos (ej. I, II, III). INFIERA LOS NÚMEROS Y CORRÍGELOS si están saltados o faltan.
   - El texto de sonido debe estar íntegramente en MAYÚSCULAS y separar acciones con doble barra (//) (ej. ENTRA TEMA // BAJA A FONDO).
 3. Texto y Párrafos (CRÍTICO):
   - Conserva estrictamente las palabras y oraciones originales. No alteres, ni resumas, ni cambies palabras para NADA.
   - Si una intervención contiene varios párrafos, divídelos en un arreglo de strings (uno por cada párrafo).
-  - En las órdenes de sonido, asegúrate de NO INCLUIR el identificador (ej. XII) ni la palabra "SON" dentro del texto de la instrucción devuelta en el campo \`text\` (ej. no pongas "XII SON ENTRA TEMA" solo "ENTRA TEMA").
+  - En las órdenes de sonido, asegúrate de NO INCLUIR el identificador (ej. XII) ni la palabra "SON" dentro del texto devuelto en el campo "text".
 
 Texto original a transformar:
 ${inputText}`;

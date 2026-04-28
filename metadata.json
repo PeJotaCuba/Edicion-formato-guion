@@ -1,5 +1,5 @@
 {
-  "name": "Editor de Guiones de Radio",
+  "name": "GuionFormat",
   "description": "Transforma cualquier texto en un guion técnico de radio profesional en formato .docx.",
   "requestFramePermissions": [],
   "majorCapabilities": []
