@@ -1,16 +1,25 @@
-import React, { useState, useRef } from 'react';
-import { Download, Loader2, Mic, RotateCcw, Sparkles, FileText, Upload, Settings } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { Download, Loader2, Mic, RotateCcw, Sparkles, FileText, Upload, Settings, Printer, Share2, ClipboardList } from 'lucide-react';
 import { generateRadioScriptDocx } from './services/docxService';
 import { RadioScript } from './types';
 import * as mammoth from 'mammoth';
 import { parseScriptLocally } from './services/localParser';
 import { normalizeScriptNumbering } from './services/normalizeService';
+import { EditorBlock } from './components/EditorBlock';
+import { EditorToolbar } from './components/EditorToolbar';
+import { InformeModal } from './components/InformeModal';
 
 export default function App() {
   const [inputText, setInputText] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [scriptData, setScriptData] = useState<RadioScript | null>(null);
+  const [originalScriptData, setOriginalScriptData] = useState<RadioScript | null>(null);
+  const [savedScriptData, setSavedScriptData] = useState<RadioScript | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showInforme, setShowInforme] = useState(false);
+  const [isDirty, setIsDirty] = useState(false);
+  const [commentModal, setCommentModal] = useState<{ active: boolean, range: Range | null }>({ active: false, range: null });
+  const previewRef = useRef<HTMLElement>(null);
   
   // Mobile UI Tab State
   const [activeTab, setActiveTab] = useState<'input' | 'preview'>('input');
@@ -22,6 +31,80 @@ export default function App() {
 
   const [selectionStats, setSelectionStats] = useState<{ paragraphs: number, lines: number, words: number, repetitions: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [activeTooltip, setActiveTooltip] = useState<{ x: number, y: number, text: string } | null>(null);
+
+  useEffect(() => {
+     const previewEl = previewRef.current;
+     if (!previewEl) return;
+
+     let timeoutId: number;
+
+     const handlePointerEvent = (e: MouseEvent | TouchEvent) => {
+        const target = e.target as HTMLElement;
+        const mark = target.closest('mark.comment-mark');
+        if (mark) {
+           const comment = mark.getAttribute('data-comment');
+           if (comment) {
+               const rect = mark.getBoundingClientRect();
+               // We position the tooltip below the comment highlight
+               setActiveTooltip({ 
+                  x: rect.left + rect.width / 2, 
+                  y: rect.bottom + window.scrollY, 
+                  text: comment 
+               });
+               
+               if (e.type === 'mouseover') {
+                   clearTimeout(timeoutId);
+                   mark.addEventListener('mouseleave', () => {
+                       timeoutId = window.setTimeout(() => setActiveTooltip(null), 300);
+                   }, { once: true });
+               }
+           }
+        } else if (e.type === 'click') {
+           setActiveTooltip(null);
+        }
+     };
+
+     previewEl.addEventListener('click', handlePointerEvent);
+     previewEl.addEventListener('mouseover', handlePointerEvent);
+     
+     return () => {
+        previewEl.removeEventListener('click', handlePointerEvent);
+        previewEl.removeEventListener('mouseover', handlePointerEvent);
+     };
+  }, [scriptData, activeTab]);
+
+  const handleSave = () => {
+    if (scriptData) {
+      setSavedScriptData(JSON.parse(JSON.stringify(scriptData)));
+      setIsDirty(false);
+    }
+  };
+
+  const handleRevert = () => {
+    if (savedScriptData) {
+      const confirmRevert = window.confirm("¿Está seguro de que desea revertir todos los cambios no guardados?");
+      if (confirmRevert) {
+        setScriptData(JSON.parse(JSON.stringify(savedScriptData)));
+        setIsDirty(false);
+      }
+    }
+  };
+
+  const requireSaveBeforeAction = (action: () => void) => {
+    if (isDirty) {
+      const confirmSave = window.confirm("Hay cambios sin guardar. ¿Desea guardarlos y continuar? Si cancela, los últimos cambios no se incluirán.");
+      if (confirmSave) {
+        handleSave();
+        // Since handleSave updates state immediately in memory for scriptData, we can just proceed.
+        // Wait, action may rely on originalScriptData (like informe). State updates are async.
+        // But generate docx uses scriptData. Let's just proceed.
+        setTimeout(action, 0); 
+      }
+    } else {
+      action();
+    }
+  };
 
   const processScriptText = async (textToProcess: string) => {
     if (!textToProcess.trim()) return;
@@ -33,7 +116,17 @@ export default function App() {
       const localParsedData = parseScriptLocally(textToProcess);
       
       if (localParsedData) {
-          setScriptData(normalizeScriptNumbering(localParsedData));
+          const normalized = normalizeScriptNumbering(localParsedData);
+          setScriptData(normalized);
+          setOriginalScriptData(JSON.parse(JSON.stringify(normalized)));
+          setSavedScriptData(JSON.parse(JSON.stringify(normalized)));
+          // Auto-scroll on generated
+          if (window.innerWidth < 768) {
+             setActiveTab('preview');
+          }
+          setTimeout(() => {
+             previewRef.current?.scrollIntoView({ behavior: 'smooth' });
+          }, 300);
       } else {
           throw new Error("No se pudo extraer el contenido. Revise el archivo.");
       }
@@ -52,6 +145,9 @@ export default function App() {
   const handleClear = () => {
     setInputText('');
     setScriptData(null);
+    setOriginalScriptData(null);
+    setSavedScriptData(null);
+    setIsDirty(false);
     setError(null);
     if (fileInputRef.current) {
         fileInputRef.current.value = '';
@@ -99,8 +195,11 @@ export default function App() {
   const getFileName = (script: RadioScript | null) => {
     if (!script) return 'GUION_FORMATEADO.DOCX';
     
-    const programa = script.credits.find(c => c.label === 'PROGRAMA')?.value || '';
-    const fechaRaw = script.credits.find(c => c.label === 'FECHA')?.value || '';
+    // Strip HTML from values in case they were edited using content editable
+    const stripHtml = (html: string) => html.replace(/<[^>]+>/g, '').trim();
+
+    const programa = stripHtml(script.credits.find(c => c.label === 'PROGRAMA' || c.label.includes('PROGRAMA'))?.value || '');
+    const fechaRaw = stripHtml(script.credits.find(c => c.label === 'FECHA' || c.label.includes('FECHA'))?.value || '');
     
     let fileName = 'GUION';
     if (programa && programa !== '_________________________') {
@@ -203,31 +302,139 @@ export default function App() {
     setSelectionStats({ paragraphs, lines, words, repetitions });
   };
 
+  const handleAddComment = () => {
+     const selection = window.getSelection();
+     if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return;
+     
+     setCommentModal({ active: true, range: selection.getRangeAt(0).cloneRange() });
+  };
+
+  const handleConfirmComment = (text: string) => {
+     if (commentModal.range && text.trim()) {
+         const selection = window.getSelection();
+         selection?.removeAllRanges();
+         selection?.addRange(commentModal.range);
+
+         try {
+             // using execCommand over surroundContents so it safely handles mixed nodes across blocks (to some extent)
+             // But actually, just applying a background via execCommand or using standard wrapping
+             const selectedText = commentModal.range.toString();
+             const frag = commentModal.range.cloneContents();
+             const div = document.createElement('div');
+             div.appendChild(frag);
+             const inner = div.innerHTML;
+
+             const safeText = text.replace(/"/g, '&quot;');
+             document.execCommand('insertHTML', false, `<mark class="bg-yellow-200 cursor-help comment-mark rounded px-1" data-comment="${safeText}">${inner}</mark>`);
+         } catch (e) {
+             console.warn("No se pudo envolver la selección", e);
+         }
+         setIsDirty(true);
+     }
+     setCommentModal({ active: false, range: null });
+  };
+
+  const updateScriptBodyText = (itemIndex: number, textIndex: number, newHtml: string) => {
+     setScriptData(prev => {
+        if (!prev) return prev;
+        const newBody = [...prev.body];
+        const newTextList = [...newBody[itemIndex].text];
+        newTextList[textIndex] = newHtml;
+        newBody[itemIndex] = { ...newBody[itemIndex], text: newTextList };
+        return { ...prev, body: newBody };
+     });
+     setIsDirty(true);
+  };
+
+  const updateSpeakerProps = (itemIndex: number, newHtml: string, type: 'name' | 'intention') => {
+     setScriptData(prev => {
+        if (!prev) return prev;
+        const newBody = [...prev.body];
+        const cleanContent = newHtml.replace(/<[^>]+>/g, '').trim(); // strip html for core identifying fields
+        
+        if (type === 'name') {
+           // We expect something like "01 LOCUTOR:"
+           const match = cleanContent.match(/^(?:(\d+)\s+)?([^:]+):?$/i);
+           const id = match && match[1] ? match[1] : '';
+           const name = match && match[2] ? match[2] : cleanContent.replace(':', '');
+           
+           newBody[itemIndex] = { ...newBody[itemIndex], identifier: id, speakerName: name };
+        } else if (type === 'intention') {
+           const intention = cleanContent.replace(/^\(/, '').replace(/\)$/, '');
+           newBody[itemIndex] = { ...newBody[itemIndex], intention };
+        }
+        
+        return { ...prev, body: newBody };
+     });
+     setIsDirty(true);
+  };
+
+  const updateCredit = (index: number, newHtml: string) => {
+    setScriptData(prev => {
+        if (!prev) return prev;
+        const newCredits = [...prev.credits];
+        newCredits[index] = { ...newCredits[index], value: newHtml };
+        return { ...prev, credits: newCredits };
+    });
+    setIsDirty(true);
+  };
+
   return (
     <div className="bg-slate-100 flex flex-col h-screen overflow-hidden text-slate-800 font-sans">
       
       {/* Header Navigation */}
-      <header className="bg-white border-b border-slate-300 px-4 sm:px-6 py-3 sm:py-4 flex flex-col sm:flex-row justify-between items-center shadow-sm shrink-0 z-20 gap-3 sm:gap-0">
-        <div className="flex items-center space-x-2 sm:space-x-3 w-full sm:w-auto justify-center sm:justify-start">
-          <div className="bg-indigo-600 p-1.5 sm:p-2 rounded-lg shrink-0">
-            <Mic className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
+      <header className="bg-white border-b border-slate-300 px-4 sm:px-6 py-3 flex flex-col items-center sm:items-stretch shadow-sm shrink-0 z-20 gap-3">
+        <div className="flex flex-col sm:flex-row justify-between w-full items-center gap-3">
+          <div className="flex items-center space-x-2 sm:space-x-3 w-full sm:w-auto justify-center sm:justify-start shrink-0">
+            <div className="bg-indigo-600 p-1.5 sm:p-2 rounded-lg shrink-0">
+              <Mic className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
+            </div>
+            <h1 className="text-sm sm:text-lg font-bold tracking-tight text-slate-900 uppercase text-center sm:text-left shrink-0">GuionFormat</h1>
           </div>
-          <h1 className="text-sm sm:text-xl font-bold tracking-tight text-slate-900 uppercase text-center sm:text-left">GuionFormat</h1>
-        </div>
-        <div className="flex items-center space-x-4 w-full sm:w-auto justify-center sm:justify-end">
-          {scriptData && (
-            <span className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-widest hidden md:inline-block">
-                Documento: {getFileName(scriptData)}
-            </span>
-          )}
-          <button 
-            onClick={handleDownload}
-            disabled={!scriptData}
-            className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed text-white w-full sm:w-auto px-4 sm:px-5 py-2 rounded font-bold text-xs sm:text-sm flex items-center justify-center shadow-md transition-colors"
-          >
-            <Download className="w-4 h-4 mr-2 shrink-0" />
-            <span>DESCARGAR</span><span className="hidden sm:inline">&nbsp;.DOCX</span>
-          </button>
+          <div className="flex items-center w-full justify-center sm:justify-end gap-3 flex-wrap sm:flex-nowrap">
+            {scriptData && (
+              <>
+                <span className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-widest bg-slate-100 px-3 py-1.5 rounded border border-slate-200">
+                    Documento: <span className="font-bold text-slate-700">{getFileName(scriptData)}</span>
+                </span>
+                
+                <div className="flex gap-2">
+                    <button 
+                      onClick={() => requireSaveBeforeAction(handleDownload)}
+                      className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded font-bold text-[10px] sm:text-xs flex items-center justify-center shadow-sm transition-colors"
+                      title="Descargar DOCX"
+                    >
+                      <Download className="w-3 h-3 sm:mr-1 shrink-0" />
+                      <span className="hidden sm:inline">DESCARGAR</span>
+                    </button>
+                    <button 
+                      onClick={() => requireSaveBeforeAction(() => window.print())}
+                      className="bg-slate-800 hover:bg-slate-900 text-white px-3 py-1.5 rounded font-bold text-[10px] sm:text-xs flex items-center justify-center shadow-sm transition-colors"
+                      title="Imprimir"
+                    >
+                      <Printer className="w-3 h-3 sm:mr-1 shrink-0" />
+                      <span className="hidden sm:inline">IMPRIMIR</span>
+                    </button>
+                    <button 
+                      onClick={() => requireSaveBeforeAction(() => window.open(`https://wa.me/?text=${encodeURIComponent('Revisa el guion generado en la plataforma de GuionFormat.')}`, '_blank'))}
+                      className="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded font-bold text-[10px] sm:text-xs flex items-center justify-center shadow-sm transition-colors"
+                      title="Compartir por WhatsApp"
+                    >
+                      <Share2 className="w-3 h-3 sm:mr-1 shrink-0" />
+                      <span className="hidden sm:inline">COMPARTIR</span>
+                    </button>
+                    <button 
+                      onClick={() => requireSaveBeforeAction(() => setShowInforme(true))}
+                      className="bg-orange-500 hover:bg-orange-600 text-white px-3 py-1.5 rounded font-bold text-[10px] sm:text-xs flex items-center justify-center shadow-sm transition-colors"
+                      title="Ver Informe de Cambios"
+                    >
+                      <ClipboardList className="w-3 h-3 sm:mr-1 shrink-0" />
+                      <span className="hidden sm:inline">INFORME</span>
+                    </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </header>
 
@@ -364,25 +571,40 @@ export default function App() {
         </section>
 
         {/* Preview Area */}
-        <section className={`flex-1 bg-white flex-col relative ${activeTab === 'preview' ? 'flex' : 'hidden md:flex'}`}>
-          <div className="absolute top-4 right-6 p-2 z-10">
-            <span className="bg-indigo-100 text-indigo-800 text-[10px] font-bold px-2 py-1 rounded border border-indigo-200 shadow-sm">
-               {scriptData ? `VISTA PREVIA DE FORMATO ARIAL ${fontSize}PT` : 'VISTA PREVIA'}
-            </span>
-          </div>
-          
+        <section 
+           ref={previewRef}
+           style={{ WebkitOverflowScrolling: 'touch' }}
+           className={`flex-1 bg-white flex-col relative ${activeTab === 'preview' ? 'flex' : 'hidden md:flex'}`}
+        >
+          {scriptData && (
+             <EditorToolbar 
+                onAddComment={handleAddComment} 
+                onSave={handleSave} 
+                onRevert={handleRevert} 
+                isDirty={isDirty} 
+             />
+          )}
+
           <div 
-            className="flex-1 py-12 px-8 overflow-y-auto shadow-inner flex justify-center bg-slate-200"
+            className="flex-1 py-12 px-8 overflow-y-auto shadow-inner flex flex-col items-center bg-slate-200 relative pb-32"
             onMouseUp={handleSelection}
             onKeyUp={handleSelection}
           >
             {/* The "Paper" - Carta (Letter) Size: 21.59cm x 27.94cm */}
             <div 
-              className="w-full max-w-[21.59cm] h-fit min-h-[27.94cm] bg-white shadow-2xl relative" 
+              className="w-full max-w-[21.59cm] min-h-[27.94cm] h-max bg-white shadow-2xl relative mb-12 pb-16" 
             >
+              {scriptData && (
+                <>
+                  {/* Top Ruler */}
+                  <div className="absolute top-0 left-0 right-0 h-3 border-b border-slate-300 pointer-events-none opacity-50" style={{ backgroundImage: 'repeating-linear-gradient(90deg, transparent, transparent 0.5cm, #cbd5e1 0.5cm, #cbd5e1 0.52cm)' }} />
+                  {/* Left Ruler */}
+                  <div className="absolute top-0 left-0 bottom-0 w-3 border-r border-slate-300 pointer-events-none opacity-50" style={{ backgroundImage: 'repeating-linear-gradient(180deg, transparent, transparent 0.5cm, #cbd5e1 0.5cm, #cbd5e1 0.52cm)' }} />
+                </>
+              )}
               {scriptData ? (
                 <div 
-                    className="p-8 sm:p-[1.27cm] select-text"
+                    className="p-8 sm:p-[1.27cm]"
                     style={{ 
                         fontFamily: 'Arial, sans-serif',
                         fontSize: `${fontSize}pt`,
@@ -393,11 +615,16 @@ export default function App() {
                   <div className="absolute top-[1.27cm] right-[1.27cm] font-bold font-arial text-[12pt]">1</div>
 
                   {/* Header Block */}
-                  <div className="mb-8 space-y-0">
+                  <div className="mb-8 space-y-2">
                     {scriptData.credits.map((c, i) => (
-                      <p key={i}>
-                        <span className="font-bold uppercase">{c.label}:</span> {c.value}
-                      </p>
+                      <div key={i} className="leading-snug">
+                        <span className="font-bold uppercase">{c.label}: </span>
+                        <EditorBlock 
+                            html={c.value}
+                            onChange={(html) => updateCredit(i, html)}
+                            className="inline"
+                        />
+                      </div>
                     ))}
                   </div>
 
@@ -410,8 +637,20 @@ export default function App() {
                              const cleanText = idx === 0 ? p.replace(/^(?:SON|OP)\s*:?\s*/i, '').trim() : p;
                              return (
                                <div key={`${i}-${idx}`} style={{ paddingLeft: '2cm', textIndent: idx === 0 ? '-2cm' : '0' }}>
-                                 {idx === 0 && <span className="font-bold uppercase">{item.identifier} SON: </span>}
-                                 <span className="font-bold uppercase underline underline-offset-2">{cleanText}</span>
+                                 {idx === 0 && (
+                                     <span className="font-bold uppercase">
+                                       <EditorBlock 
+                                          html={`${item.identifier} SON:`}
+                                          onChange={(html) => updateSpeakerProps(i, html, 'name')}
+                                          className="inline"
+                                       /> 
+                                     </span>
+                                 )}
+                                 <EditorBlock 
+                                    html={cleanText}
+                                    onChange={(html) => updateScriptBodyText(i, idx, html)}
+                                    className="font-bold uppercase underline underline-offset-2 inline" 
+                                 />
                                </div>
                              );
                          });
@@ -421,19 +660,39 @@ export default function App() {
                              <div key={`${i}-${idx}`} style={{ paddingLeft: '2cm', textIndent: idx === 0 ? '-2cm' : '0' }}>
                                {idx === 0 && (
                                    <>
-                                     <span className="font-bold uppercase">{item.identifier ? `${item.identifier} ` : ''}{item.speakerName || 'LOCUTOR'}:</span>
-                                     {item.intention && <span className="font-bold uppercase"> ({item.intention})</span>}
+                                     <span className="font-bold uppercase">
+                                       <EditorBlock 
+                                          html={`${item.identifier ? `${item.identifier} ` : ''}${item.speakerName || 'LOCUTOR'}:`}
+                                          onChange={(html) => updateSpeakerProps(i, html, 'name')}
+                                          className="inline"
+                                       />
+                                     </span>
+                                     {item.intention && <span className="font-bold uppercase"> 
+                                        <EditorBlock 
+                                           html={`(${item.intention})`}
+                                           onChange={(html) => updateSpeakerProps(i, html, 'intention')} 
+                                           className="inline"
+                                        />
+                                     </span>}
                                      <span> </span>
                                    </>
                                )}
-                               <span>{p}</span>
+                               <EditorBlock 
+                                   html={p}
+                                   onChange={(html) => updateScriptBodyText(i, idx, html)}
+                                   className="inline" 
+                               />
                              </div>
                          ));
                       } else if (item.type === 'text') {
                         const paragraphs = item.text || [];
                         return paragraphs.map((p, idx) => (
-                            <div key={`${i}-${idx}`} className="text-slate-700">
-                              <span>{p}</span>
+                            <div key={`${i}-${idx}`} className="text-slate-700" style={{ paddingLeft: '2cm' }}>
+                              <EditorBlock 
+                                   html={p}
+                                   onChange={(html) => updateScriptBodyText(i, idx, html)}
+                                   className="inline" 
+                               />
                             </div>
                         ));
                       }
@@ -450,6 +709,7 @@ export default function App() {
                 </div>
               )}
             </div>
+
           </div>
         </section>
       </main>
@@ -475,6 +735,64 @@ export default function App() {
           )}
         </div>
       </footer>
+      {showInforme && (
+        <InformeModal 
+           original={originalScriptData} 
+           current={scriptData} 
+           onClose={() => setShowInforme(false)} 
+        />
+      )}
+
+      {/* Editor Comment Modals & Tooltips */}
+      {commentModal.active && (
+         <div className="fixed inset-0 bg-slate-900/30 z-50 flex items-center justify-center p-4">
+           <div className="bg-white rounded-lg shadow-xl w-full max-w-sm p-4 animate-in fade-in zoom-in-95 duration-200">
+              <h3 className="text-sm font-bold text-slate-800 mb-2">Insertar Comentario</h3>
+              <textarea 
+                 autoFocus
+                 className="w-full text-sm p-2 border border-slate-300 rounded focus:ring-2 focus:ring-indigo-500 focus:outline-none resize-none min-h-[100px]"
+                 placeholder="Escriba su comentario aquí..."
+                 onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        handleConfirmComment(e.currentTarget.value);
+                    }
+                 }}
+              />
+              <div className="flex justify-end space-x-2 mt-3">
+                 <button 
+                    onClick={() => setCommentModal({ active: false, range: null })}
+                    className="px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded"
+                 >
+                    CANCELAR
+                 </button>
+                 <button 
+                    onClick={(e) => {
+                        const textarea = e.currentTarget.parentElement?.parentElement?.querySelector('textarea');
+                        if (textarea) handleConfirmComment(textarea.value);
+                    }}
+                    className="px-3 py-1.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded shadow-sm"
+                 >
+                    COMENTAR
+                 </button>
+              </div>
+           </div>
+         </div>
+      )}
+
+      {activeTooltip && (
+          <div 
+            className="fixed z-50 animate-in fade-in slide-in-from-bottom-2 px-3 py-2 text-xs font-medium text-white bg-slate-800 rounded shadow-lg max-w-xs break-words pointer-events-none"
+            style={{ 
+               left: Math.max(10, Math.min(window.innerWidth - 10, activeTooltip.x)), 
+               top: activeTooltip.y + 8,
+               transform: 'translate(-50%, 0)'
+            }}
+          >
+            {activeTooltip.text}
+            <div className="absolute top-0 left-1/2 -mt-1 w-2 h-2 bg-slate-800 rotate-45 -translate-x-1/2"></div>
+          </div>
+      )}
     </div>
   );
 }

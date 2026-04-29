@@ -49,6 +49,7 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
         let isSpeaker = false;
         let id = "";
         let name = "";
+        let speakerOriginalName = "";
         let intention = "";
         let textExtracted = "";
 
@@ -56,15 +57,18 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
         const colonMatch = p.match(/^[\(]?(\d*)[\)]?[\s.-]*([A-ZÁÉÍÓÚÑa-záéíóúñ0-9\s]{1,30})[.:]+\s*(?:\(([^)]+)\))?\s*(.*)$/i);
         if (colonMatch) {
             id = colonMatch[1];
-            name = colonMatch[2].trim().toUpperCase();
+            let originalName = colonMatch[2].trim();
+            name = originalName.toUpperCase();
             intention = colonMatch[3] ? colonMatch[3].trim().toUpperCase() : "";
             textExtracted = colonMatch[4].trim();
             isSpeaker = true;
+            speakerOriginalName = originalName;
         } else {
             // Attempt format 2: No colon, but explicit number + known speaker
             const noColonMatch = p.match(/^[\(]?(\d+)[\)]?[\s.-]*([A-ZÁÉÍÓÚÑa-záéíóúñ]{2,15})\b\s*(?:\(([^)]+)\))?\s*(.*)$/i);
             if (noColonMatch) {
-                let tempName = noColonMatch[2].trim().toUpperCase();
+                let originalName = noColonMatch[2].trim();
+                let tempName = originalName.toUpperCase();
                 // Only consider it a speaker without a colon if it's a known speaker
                 if (knownSpeakers.has(tempName)) {
                     id = noColonMatch[1];
@@ -72,6 +76,7 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
                     intention = noColonMatch[3] ? noColonMatch[3].trim().toUpperCase() : "";
                     textExtracted = noColonMatch[4].trim();
                     isSpeaker = true;
+                    speakerOriginalName = originalName;
                 }
             } else {
                 // Attempt format 3: No number, no colon, but STARTS EXACTLY with a known speaker
@@ -81,10 +86,12 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
                     const knownMatch = p.match(new RegExp(`^(${knownArray})\\b\\s*(?:\\(([^)]+)\\))?\\s*(.*)$`, 'i'));
                     if (knownMatch) {
                         id = "";
-                        name = knownMatch[1].trim().toUpperCase();
+                        let originalName = knownMatch[1].trim();
+                        name = originalName.toUpperCase();
                         intention = knownMatch[2] ? knownMatch[2].trim().toUpperCase() : "";
                         textExtracted = knownMatch[3].trim();
                         isSpeaker = true;
+                        speakerOriginalName = originalName;
                     }
                 }
             }
@@ -116,7 +123,7 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
                 body.push({
                     type: 'speaker',
                     identifier: speakerId, 
-                    speakerName: name,
+                    speakerName: speakerOriginalName,
                     intention: intention || undefined,
                     text: [textExtracted]
                 });

@@ -27,8 +27,8 @@ export function normalizeScriptNumbering(script: RadioScript): RadioScript {
     
     const isMetadata = (name: string) => {
         const clean = name.toUpperCase().trim();
-        return /^(EMISORA|PROGRAMA|EMISI[OÓ]N|FECHA|FECHA DE TRANSMISI[OÓ]N|FECHA DE GRABACI[OÓ]N|ESCRIBE|ESCRITOR|ESCRITOR \(A\)|ASESOR|ASESORA|ASESOR \(A\)|DIRECTOR|DIRECTORA|DIRECTOR \(A\)|DIRIGE|DIRECCI[OÓ]N|DIRECCI[OÓ]N GENERAL|REDACCI[OÓ]N|GUI[OÓ]N|TEMA|REALIZADOR|REALIZADOR \(A\) DE SONIDO|REALIZADOR DE SONIDO|REALIZADOR DE SONIDOS|REALIZADOR DE SONIDOS \(A\)|LOCUTOR \(A\)|NO OLVIDES|RECUERDA|CONSEJOS)$/.test(clean) || 
-               clean.startsWith('DIRECTOR') || clean.startsWith('ASESOR') || clean.startsWith('REALIZADOR') || clean.startsWith('DIRECCI[OÓ]') || clean.startsWith('FECHA DE') || clean.startsWith('NO OLVIDE') || clean.startsWith('RECUERDE');
+        return /^(EMISORA|PROGRAMA|EMISI[OÓ]N|FECHA|FECHA DE TRANSMISI[OÓ]N|FECHA DE GRABACI[OÓ]N|ESCRIBE|ESCRITOR|ESCRITOR \(A\)|ASESOR|ASESORA|ASESOR \(A\)|DIRECTOR|DIRECTORA|DIRECTOR \(A\)|DIRIGE|DIRECCI[OÓ]N|DIRECCI[OÓ]N GENERAL|REDACCI[OÓ]N|GUI[OÓ]N|TEMA|REALIZADOR|REALIZADOR \(A\) DE SONIDO|REALIZADOR DE SONIDO|REALIZADOR DE SONIDOS|REALIZADOR DE SONIDOS \(A\)|LOCUTOR \(A\)|NO OLVIDES|RECUERDA|CONSEJOS|ESCUCHEMOS|ESCUCHAMOS|ESCUCHE|ESCUCHEN|ATENCI[OÓ]N|IMPORTANTE)$/.test(clean) || 
+               clean.startsWith('DIRECTOR') || clean.startsWith('ASESOR') || clean.startsWith('REALIZADOR') || clean.startsWith('DIRECCI[OÓ]') || clean.startsWith('FECHA DE') || clean.startsWith('NO OLVIDE') || clean.startsWith('RECUERDE') || clean.startsWith('ESCUCHE');
     };
 
     // First pass: detect the "Standard Speaker" (e.g. LOC or LOCUTOR)
@@ -86,20 +86,24 @@ export function normalizeScriptNumbering(script: RadioScript): RadioScript {
             }
 
             // Rule B: Strict numbering policy
-            // Only number if:
-            // 1. It starts with LOC
-            // 2. OR it had an original ID in the document
             const isLoc = cleanName.startsWith('LOC');
             const hadId = originalId !== '' && !isNaN(Number(originalId));
             const shouldNumber = isLoc || hadId;
 
-            // Si es un "falso locutor" (frases largas como "HACEMOS UNA PAUSA" o "NO OLVIDES ESTOS CONSEJOS"), 
+            // Si es un "falso locutor" (frases como "HACEMOS UNA PAUSA", "ESCUCHEMOS", "NO OLVIDES"), 
             // lo convertimos a texto normal para evitar negritas/mayúsculas innecesarias.
             const words = cleanName.split(/\s+/);
-            if (!shouldNumber && words.length >= 3) {
+            const suspiciousVerbs = /^(ESCUCH[AEIO]|VAYAM|SIGAM|PASAM|CONTINU|INICI|SIGUI|ENTR[AE]|SALID|FINAL|RECUERD|VIBR[AE]|REPRODUC|ESCRIB|ANUNCI|PRESENT|COMENT|LLAMAM|BENDIC)/;
+            const isProbablyInstruction = !shouldNumber && (
+                words.length >= 2 || 
+                suspiciousVerbs.test(cleanName)
+            );
+
+            if (isProbablyInstruction && cleanName !== standardSpeaker && !isLoc) {
+                 const textJoined = item.text.join(' ').trim();
                  normalizedBody.push({
                     type: 'text',
-                    text: [`${rawName}: ${item.text.join(' ')}`]
+                    text: [textJoined ? `${rawName}: ${textJoined}` : `${rawName}:`]
                 });
                 return;
             }

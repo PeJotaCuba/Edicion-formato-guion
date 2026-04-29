@@ -7,6 +7,44 @@ export interface DocxSettings {
     paragraphSpacing: number; // 3, 6, 10
 }
 
+function parseHtmlToTextRuns(htmlString: string, defaultProps: { bold?: boolean, italics?: boolean, underline?: boolean } = {}): TextRun[] {
+    const temp = document.createElement('div');
+    temp.innerHTML = htmlString;
+    const runs: TextRun[] = [];
+
+    function traverse(node: Node, currentProps: { bold?: boolean, italics?: boolean, underline?: boolean }) {
+        if (node.nodeType === Node.TEXT_NODE) {
+            if (node.textContent && node.textContent.length > 0) {
+                runs.push(new TextRun({
+                    text: node.textContent,
+                    bold: currentProps.bold,
+                    italics: currentProps.italics,
+                    underline: currentProps.underline ? { type: UnderlineType.SINGLE } : undefined,
+                }));
+            }
+        } else if (node.nodeType === Node.ELEMENT_NODE) {
+            const el = node as HTMLElement;
+            const newProps = { ...currentProps };
+            if (el.tagName === 'B' || el.tagName === 'STRONG') newProps.bold = true;
+            if (el.tagName === 'I' || el.tagName === 'EM') newProps.italics = true;
+            if (el.tagName === 'U') newProps.underline = true;
+            
+            // We can also extract comments here if needed in the future using el.dataset.comment
+
+            el.childNodes.forEach(child => traverse(child, newProps));
+        }
+    }
+
+    temp.childNodes.forEach(child => traverse(child, defaultProps));
+    
+    // If runs is empty, add at least one empty TextRun to preserve empty paragraphs
+    if (runs.length === 0) {
+       runs.push(new TextRun({ text: "" }));
+    }
+    
+    return runs;
+}
+
 export async function generateRadioScriptDocx(scriptData: RadioScript, settings: DocxSettings): Promise<Blob> {
     const TWIPS_2CM = 1134;
 
@@ -17,7 +55,7 @@ export async function generateRadioScriptDocx(scriptData: RadioScript, settings:
             new Paragraph({
                 children: [
                     new TextRun({ text: credit.label + ": ", bold: true }),
-                    new TextRun({ text: credit.value })
+                    ...parseHtmlToTextRuns(credit.value)
                 ]
             })
         );
@@ -30,11 +68,10 @@ export async function generateRadioScriptDocx(scriptData: RadioScript, settings:
             const paragraphs = item.text || [];
             paragraphs.forEach((pText, idx) => {
                 const isFirst = idx === 0;
-                const runs: TextRun[] = [];
+                let runs: TextRun[] = [];
                 let cleanText = pText;
                 
                 if (isFirst) {
-                    // Prevenir la duplicación de la palabra "SON" o "OP" removiéndola si logró filtrarse con espacios y/o dos puntos.
                     cleanText = cleanText.replace(/^(?:SON|OP)\s*:?\s*/i, '').trim();
                     runs.push(new TextRun({ 
                         text: `${item.identifier} SON: `, 
@@ -42,13 +79,8 @@ export async function generateRadioScriptDocx(scriptData: RadioScript, settings:
                     }));
                 }
                 
-                runs.push(new TextRun({ 
-                    text: cleanText.toUpperCase(), 
-                    bold: true,
-                    underline: {
-                        type: UnderlineType.SINGLE
-                    }
-                }));
+                const parsedRuns = parseHtmlToTextRuns(cleanText.toUpperCase(), { bold: true, underline: true });
+                runs = runs.concat(parsedRuns);
 
                 children.push(
                     new Paragraph({
@@ -61,7 +93,7 @@ export async function generateRadioScriptDocx(scriptData: RadioScript, settings:
             const paragraphs = item.text || [];
             paragraphs.forEach((pText, idx) => {
                 const isFirst = idx === 0;
-                const runs: TextRun[] = [];
+                let runs: TextRun[] = [];
                 
                 if (isFirst) {
                     const prefixId = item.identifier ? `${item.identifier} ` : "";
@@ -73,10 +105,10 @@ export async function generateRadioScriptDocx(scriptData: RadioScript, settings:
                     }
 
                     runs.push(new TextRun({ text: "\t" }));
-                    runs.push(new TextRun({ text: pText }));
-                } else {
-                    runs.push(new TextRun({ text: pText }));
-                }
+                } 
+                
+                const parsedRuns = parseHtmlToTextRuns(pText);
+                runs = runs.concat(parsedRuns);
 
                 children.push(
                     new Paragraph({
@@ -96,7 +128,8 @@ export async function generateRadioScriptDocx(scriptData: RadioScript, settings:
             paragraphs.forEach((pText) => {
                 children.push(
                     new Paragraph({
-                        children: [new TextRun({ text: pText })]
+                        indent: { left: TWIPS_2CM },
+                        children: parseHtmlToTextRuns(pText)
                     })
                 );
             });
