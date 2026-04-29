@@ -1,4 +1,4 @@
-import { RadioScript } from './geminiService';
+import { RadioScript, ScriptItem } from '../types';
 
 function numberToRoman(num: number): string {
     const roman = {
@@ -20,76 +20,115 @@ export function normalizeScriptNumbering(script: RadioScript): RadioScript {
     let soundCounter = 1;
     let speakerCounter = 1;
 
-    // 1. Normalize Body Items
-    const normalizedBody = script.body.map(item => {
+    // 1. Identify "Selective Numbering" candidates
+    // A name is a candidate if:
+    // - It is not metadata
+    // - AND (it is 'LOC' or similar standard speaker OR it already had an ID in the original)
+    
+    const isMetadata = (name: string) => {
+        const clean = name.toUpperCase().trim();
+        return /^(EMISORA|PROGRAMA|EMISI[OÓ]N|FECHA|FECHA DE TRANSMISI[OÓ]N|FECHA DE GRABACI[OÓ]N|ESCRIBE|ESCRITOR|ESCRITOR \(A\)|ASESOR|ASESORA|ASESOR \(A\)|DIRECTOR|DIRECTORA|DIRECTOR \(A\)|DIRIGE|DIRECCI[OÓ]N|DIRECCI[OÓ]N GENERAL|REDACCI[OÓ]N|GUI[OÓ]N|TEMA|REALIZADOR|REALIZADOR \(A\) DE SONIDO|REALIZADOR DE SONIDO|REALIZADOR DE SONIDOS|REALIZADOR DE SONIDOS \(A\)|LOCUTOR \(A\)|NO OLVIDES|RECUERDA|CONSEJOS)$/.test(clean) || 
+               clean.startsWith('DIRECTOR') || clean.startsWith('ASESOR') || clean.startsWith('REALIZADOR') || clean.startsWith('DIRECCI[OÓ]') || clean.startsWith('FECHA DE') || clean.startsWith('NO OLVIDE') || clean.startsWith('RECUERDE');
+    };
+
+    // First pass: detect the "Standard Speaker" (e.g. LOC or LOCUTOR)
+    const speakerFreq = new Map<string, number>();
+    script.body.forEach(item => {
+        if (item.type === 'speaker' && item.speakerName) {
+            const name = item.speakerName.toUpperCase().trim();
+            // Evitar que metadatos contaminen la detección de locutor estándar
+            if (!isMetadata(name)) {
+                speakerFreq.set(name, (speakerFreq.get(name) || 0) + 1);
+            }
+        }
+    });
+
+    // We consider as "Standard Speaker" the most frequent one that starts with "LOC",
+    // or just the most frequent one if none start with LOC.
+    let standardSpeaker = '';
+    let maxFreq = 0;
+    speakerFreq.forEach((freq, name) => {
+        if (name.startsWith('LOC') && freq > maxFreq) {
+            maxFreq = freq;
+            standardSpeaker = name;
+        }
+    });
+    // If no LOC found, just pick the top one (que no sea metadato)
+    if (!standardSpeaker && speakerFreq.size > 0) {
+        speakerFreq.forEach((freq, name) => {
+            if (freq > maxFreq) {
+                maxFreq = freq;
+                standardSpeaker = name;
+            }
+        });
+    }
+
+    // Second pass: Perform normalization
+    const normalizedBody: ScriptItem[] = [];
+    
+    script.body.forEach(item => {
         if (item.type === 'sound') {
             const romanId = numberToRoman(soundCounter);
             soundCounter++;
-            return {
-                ...item,
-                identifier: romanId
-            };
+            normalizedBody.push({ ...item, identifier: romanId });
         } else if (item.type === 'speaker') {
-            const arabicId = speakerCounter.toString().padStart(2, '0');
-            speakerCounter++;
-            let cleanName = (item.speakerName || 'LOCUTOR').toUpperCase().replace(/[:\.\s]+$/, '');
-            return {
-                ...item,
-                identifier: arabicId,
-                speakerName: cleanName
-            };
-        }
-        return item;
-    });
-
-    // 2. Normalize Credits (Frontis)
-    const exactFrontisTemplate = [
-        'EMISORA',
-        'PROGRAMA',
-        'FECHA',
-        'TEMA',
-        'ESCRITOR (A)',
-        'ASESOR (A)',
-        'DIRECTOR (A)',
-        'REALIZADOR DE SONIDOS (A)',
-        'LOCUTOR (A)'
-    ];
-
-    const currentCreditsMap = new Map<string, string>();
-    
-    // Map existing credits
-    script.credits.forEach(c => {
-        let label = c.label.toUpperCase().replace(/\s+DE TRANSMISIÓN/i, ''); // normalize 'FECHA DE TRANSMISIÓN' back to 'FECHA' just in case
-        if (label === 'REALIZADOR DE SONIDO' || label === 'REALIZADOR') label = 'REALIZADOR DE SONIDOS (A)';
-        else if (label === 'ESCRIBE' || label === 'ESCRITOR' || label === 'GUIÓN') label = 'ESCRITOR (A)';
-        else if (label === 'ASESOR' || label === 'ASESORÍA') label = 'ASESOR (A)';
-        else if (label === 'DIRECTOR' || label === 'DIRIGE') label = 'DIRECTOR (A)';
-        else if (label === 'LOCUTOR' || label === 'LOCUTORES') label = 'LOCUTOR (A)';
-        else if (label === 'FECHA DE TRANSMISIÓN' || label === 'FECHA DE EMISIÓN') label = 'FECHA';
-        
-        currentCreditsMap.set(label, c.value);
-    });
-
-    const normalizedCredits = exactFrontisTemplate.map(label => {
-        let val = currentCreditsMap.get(label) || '_________________________';
-
-        // Enforce Emisora Name
-        if (label === 'EMISORA') {
-            const upVal = val.toUpperCase();
-            if (upVal.includes('RADIO CIUDAD MONUMENTO') && !upVal.includes('CMNL')) {
-                val = 'CMNL RADIO CIUDAD MONUMENTO';
-            } else if (!val || val === '_________________________' || val.trim() === '') {
-                val = 'CMNL RADIO CIUDAD MONUMENTO';
-            } else if (upVal === 'RADIO CIUDAD MONUMENTO') {
-                val = 'CMNL RADIO CIUDAD MONUMENTO';
+            const originalId = (item.identifier || '').trim();
+            const rawName = (item.speakerName || 'LOCUTOR').trim();
+            const cleanName = rawName.toUpperCase().replace(/[:\.\s]+$/, '');
+            
+            // Rule A: Metadata never gets numbered and shouldn't be treated as a speaker block
+            if (isMetadata(cleanName)) {
+                normalizedBody.push({
+                    type: 'text',
+                    text: [`${rawName}: ${item.text.join(' ')}`]
+                });
+                return;
             }
-        }
 
-        return { label, value: val };
+            // Rule B: Strict numbering policy
+            // Only number if:
+            // 1. It starts with LOC
+            // 2. OR it had an original ID in the document
+            const isLoc = cleanName.startsWith('LOC');
+            const hadId = originalId !== '' && !isNaN(Number(originalId));
+            const shouldNumber = isLoc || hadId;
+
+            // Si es un "falso locutor" (frases largas como "HACEMOS UNA PAUSA" o "NO OLVIDES ESTOS CONSEJOS"), 
+            // lo convertimos a texto normal para evitar negritas/mayúsculas innecesarias.
+            const words = cleanName.split(/\s+/);
+            if (!shouldNumber && words.length >= 3) {
+                 normalizedBody.push({
+                    type: 'text',
+                    text: [`${rawName}: ${item.text.join(' ')}`]
+                });
+                return;
+            }
+
+            if (shouldNumber) {
+                const arabicId = speakerCounter.toString().padStart(2, '0');
+                speakerCounter++;
+                normalizedBody.push({
+                    ...item,
+                    identifier: arabicId,
+                    speakerName: cleanName
+                });
+            } else {
+                // It's a character but shouldn't be numbered (e.g. DUO without original ID)
+                // We keep it as speaker to have the bold/caps prefix but without the number
+                normalizedBody.push({
+                    ...item,
+                    identifier: '',
+                    speakerName: cleanName
+                });
+            }
+        } else {
+            normalizedBody.push(item);
+        }
     });
 
+    // 3. Final return
     return {
-        credits: normalizedCredits,
+        ...script,
         body: normalizedBody
     };
 }

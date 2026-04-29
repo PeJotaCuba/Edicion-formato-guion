@@ -1,4 +1,4 @@
-import { RadioScript } from './geminiService';
+import { RadioScript } from '../types';
 
 export function parseScriptLocally(inputText: string): RadioScript | null {
     // Dividir por líneas y descartar vacías
@@ -91,18 +91,31 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
         }
         
         if (isSpeaker) {
-            if (parsingCredits && !id && name.match(/^(EMISORA|PROGRAMA|FECHA|ESCRIBE|ASESOR|ASESORA|DIRIGE|DIRECTOR|TEMA|REALIZADOR|LOCUTOR|LOCUTORA)$/)) {
-                // It's a credit, skip doing speaker logic
-            } else if (parsingCredits && !id && name.length > 20) {
-                // Or another stray text
-            } else {
+            const isCreditLabel = name.match(/^(EMISORA|PROGRAMA|EMISI[OÓ]N|FECHA|FECHA DE TRANSMISI[OÓ]N|FECHA DE GRABACI[OÓ]N|ESCRIBE|ESCRITOR|GUI[OÓ]N|GUION|ASESOR|ASESORA|DIRIGE|DIRECTOR|DIRECCI[OÓ]N|DIRECCI[OÓ]N GENERAL|REDACCI[OÓ]N|TEMA|REALIZADOR|REALIZADOR DE SONIDO|REALIZADOR DE SONIDOS|LOCUTOR|LOCUTORA)$/);
+            
+            if (isCreditLabel && (!id || id.trim() === '')) {
+                // Nunca tratar etiquetas de crédito como locutores si no tienen número explícito, 
+                // incluso fuera del bloque de créditos, para evitar falsos positivos
+                isSpeaker = false; 
+            } else if (parsingCredits && !id && name.length > 25) {
+                // Probablemente texto suelto o un párrafo que por azar tiene ":"
+                isSpeaker = false;
+            } else if (parsingCredits && !id && !knownSpeakers.has(name) && !isCreditLabel) {
+                // Si estamos en créditos y no es un locutor conocido ni una etiqueta de crédito
+                // lo tratamos como posible crédito genérico abajo
+                isSpeaker = false;
+            }
+
+            if (isSpeaker) {
                 parsingCredits = false;
                 foundValidContent = true;
-                if (id.length === 1) id = '0' + id;
+                
+                let speakerId = id;
+                if (speakerId && speakerId.length === 1 && !isNaN(Number(speakerId))) speakerId = '0' + speakerId;
                 
                 body.push({
                     type: 'speaker',
-                    identifier: id, // El id puede estar vacio, normalizeService lo llenará
+                    identifier: speakerId, 
                     speakerName: name,
                     intention: intention || undefined,
                     text: [textExtracted]
@@ -117,8 +130,8 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
 
         // Matcher para créditos
         if (parsingCredits) {
-            const creditMatch = p.match(/^([a-zA-ZÁÉÍÓÚáéíóúñÑ\s]+):\s*(.*)$/i);
-            const kwMatch = p.match(/^(EMISORA|PROGRAMA|FECHA|ESCRIBE|ASESOR|ASESORA|DIRIGE|DIRECTOR|TEMA|REALIZADOR(?: DE SONIDO| DE SONIDOS)?|LOC|LOCUTOR|LOCUTORA)\b\s*(.*)$/i);
+            const creditMatch = p.match(/^([a-zA-ZÁÉÍÓÚáéíóúñÑ\s\(\)]+):\s*(.*)$/i);
+            const kwMatch = p.match(/^(EMISORA|PROGRAMA|EMISI[OÓ]N|FECHA(?: DE TRANSMISI[OÓ]N| DE GRABACI[OÓ]N)?|ESCRIBE|ESCRITOR|GUI[OÓ]N|GUION|ASESOR|ASESORA|DIRIGE|DIRECTOR|TEMA|REALIZADOR(?: DE SONIDO| DE SONIDOS)?|LOCUTOR|LOCUTORA)\b\s*(:?\s*.*)$/i);
 
             if (creditMatch && creditMatch[1].length < 40) {
                 credits.push({
@@ -127,18 +140,27 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
                 });
                 continue;
             } else if (kwMatch) {
+                // Limpiar el valor si empieza por ":" accidentalmente (atrapado por kwMatch)
+                let val = kwMatch[2].trim();
+                if (val.startsWith(':')) val = val.substring(1).trim();
+
                 credits.push({
                     label: kwMatch[1].trim().toUpperCase(),
-                    value: kwMatch[2].trim()
+                    value: val
                 });
                 continue;
-            } else {
-                continue; 
             }
         }
         
         // Párrafo de continuación (si pertenece a la intervención anterior)
         if (!parsingCredits) {
+            const isCreditLabel = p.match(/^(EMISORA|PROGRAMA|EMISI[OÓ]N|FECHA(?: DE TRANSMISI[OÓ]N| DE GRABACI[OÓ]N)?|ESCRIBE|ESCRITOR|GUI[OÓ]N|GUION|ASESOR|ASESORA|DIRIGE|DIRECTOR|TEMA|REALIZADOR|REALIZADOR DE SONIDO|REALIZADOR DE SONIDOS|LOCUTOR|LOCUTORA)\b\s*:/i);
+            
+            if (isCreditLabel) {
+                // Si encontramos una etiqueta de crédito en medio del cuerpo, la ignoramos para evitar duplicados
+                continue;
+            }
+
             if (body.length > 0) {
                 body[body.length - 1].text.push(p);
             } else {
@@ -152,44 +174,74 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
         }
     }
     
-    // Normalizar créditos elementales (Reemplazos comunes)
-    let emisoraEncontrada = false;
-    credits.forEach(c => {
-        if (c.label === 'REALIZADOR DE SONIDOS' || c.label === 'REALIZADOR') c.label = 'REALIZADOR DE SONIDO';
-        if (c.label === 'FECHA') c.label = 'FECHA DE TRANSMISIÓN';
-        if (c.label === 'EMISORA') {
-            emisoraEncontrada = true;
-            if (c.value.toUpperCase().includes('RADIO CIUDAD MONUMENTO') && !c.value.toUpperCase().includes('CMNL')) {
-                c.value = 'CMNL RADIO CIUDAD MONUMENTO';
-            } else if (!c.value || c.value.trim() === '_________________________') {
-                c.value = 'CMNL RADIO CIUDAD MONUMENTO';
-            } else if (c.value.toUpperCase() === 'RADIO CIUDAD MONUMENTO') {
-                c.value = 'CMNL RADIO CIUDAD MONUMENTO';
+    // Normalización final de créditos (Frontis)
+    const normalizedCredits: {label: string, value: string}[] = [];
+    const seenLabels = new Set<string>();
+
+    const templateOrder = [
+        'EMISORA',
+        'PROGRAMA',
+        'EMISIÓN', // Nuevo campo solicitado
+        'ESCRIBE',
+        'ESCRITOR',
+        'ASESOR',
+        'ASESORA',
+        'DIRECTOR',
+        'DIRECCIÓN',
+        'DIRECCIÓN GENERAL',
+        'REDACCIÓN',
+        'REALIZADOR (A) DE SONIDO', // Formato con (A)
+        'FECHA DE TRANSMISIÓN',
+        'FECHA DE GRABACIÓN', // Nuevo campo solicitado
+        'FECHA',
+        'TEMA'
+    ];
+
+    // Helper to find and normalize labels
+    const findAndNormalize = (label: string, value: string) => {
+        let cleanLabel = label.toUpperCase().trim();
+        let cleanValue = value.trim();
+
+        if (cleanLabel.includes('REALIZADOR') && cleanLabel.includes('SONIDO')) {
+            cleanLabel = 'REALIZADOR (A) DE SONIDO';
+        } else if (cleanLabel === 'REALIZADOR' || cleanLabel === 'REALIZADOR DE SONIDOS') {
+            cleanLabel = 'REALIZADOR (A) DE SONIDO';
+        }
+
+        if (cleanLabel === 'EMISORA') {
+            if (cleanValue.toUpperCase().includes('RADIO CIUDAD MONUMENTO') && !cleanValue.toUpperCase().includes('CMNL')) {
+                cleanValue = 'CMNL RADIO CIUDAD MONUMENTO';
+            } else if (!cleanValue || cleanValue === '_________________________') {
+                cleanValue = 'CMNL RADIO CIUDAD MONUMENTO';
             }
+        }
+        
+        return { label: cleanLabel, value: cleanValue };
+    };
+
+    // First, process existing credits
+    credits.forEach(c => {
+        const normalized = findAndNormalize(c.label, c.value);
+        if (!seenLabels.has(normalized.label)) {
+            normalizedCredits.push(normalized);
+            seenLabels.add(normalized.label);
         }
     });
 
-    if (!emisoraEncontrada) {
-        // Find if any label or value mentions 'RADIO CIUDAD MONUMENTO'
-        const hasMention = credits.some(c => 
-            c.label.toUpperCase().includes('RADIO CIUDAD MONUMENTO') || 
-            c.value.toUpperCase().includes('RADIO CIUDAD MONUMENTO')
-        );
-        if (hasMention) {
-             credits.unshift({ label: 'EMISORA', value: 'CMNL RADIO CIUDAD MONUMENTO' });
-        } else {
-             // as requested: "SI NO ESTA LO PONES SIEMPRE ARRIBA"
-             credits.unshift({ label: 'EMISORA', value: 'CMNL RADIO CIUDAD MONUMENTO' });
-        }
+    // Ensure core labels exist if they were missing (Optional, but user said "SI NO ESTA LO PONES SIEMPRE ARRIBA" for EMISORA)
+    if (!seenLabels.has('EMISORA')) {
+        normalizedCredits.unshift({ label: 'EMISORA', value: 'CMNL RADIO CIUDAD MONUMENTO' });
     }
 
-    // Si faltan etiquetas elementales, se inyectan en blanco por protocolo
-    const baseLabels = ['EMISORA', 'PROGRAMA', 'REALIZADOR DE SONIDO', 'FECHA DE TRANSMISIÓN'];
-    for (const req of baseLabels) {
-        if (!credits.find(c => c.label.includes(req))) {
-            credits.push({ label: req, value: '_________________________' });
-        }
-    }
-    
-    return { credits, body };
+    // Sort according to templateOrder
+    normalizedCredits.sort((a, b) => {
+        const indexA = templateOrder.indexOf(a.label);
+        const indexB = templateOrder.indexOf(b.label);
+        if (indexA === -1 && indexB === -1) return 0;
+        if (indexA === -1) return 1;
+        if (indexB === -1) return -1;
+        return indexA - indexB;
+    });
+
+    return { credits: normalizedCredits, body };
 }

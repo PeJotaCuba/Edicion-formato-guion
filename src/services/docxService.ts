@@ -1,5 +1,5 @@
 import { Document, Packer, Paragraph, TextRun, AlignmentType, Header, PageNumber, UnderlineType } from "docx";
-import { RadioScript } from "./geminiService";
+import { RadioScript } from "../types";
 
 export interface DocxSettings {
     fontSize: number;
@@ -36,7 +36,10 @@ export async function generateRadioScriptDocx(scriptData: RadioScript, settings:
                 if (isFirst) {
                     // Prevenir la duplicación de la palabra "SON" o "OP" removiéndola si logró filtrarse con espacios y/o dos puntos.
                     cleanText = cleanText.replace(/^(?:SON|OP)\s*:?\s*/i, '').trim();
-                    runs.push(new TextRun({ text: `${item.identifier} SON `, bold: true }));
+                    runs.push(new TextRun({ 
+                        text: `${item.identifier} SON: `, 
+                        bold: true
+                    }));
                 }
                 
                 runs.push(new TextRun({ 
@@ -54,21 +57,23 @@ export async function generateRadioScriptDocx(scriptData: RadioScript, settings:
                     })
                 );
             });
-        } else {
+        } else if (item.type === "speaker") {
             const paragraphs = item.text || [];
             paragraphs.forEach((pText, idx) => {
                 const isFirst = idx === 0;
                 const runs: TextRun[] = [];
                 
                 if (isFirst) {
-                    let prefix = `${item.identifier} ${item.speakerName || "LOCUTOR"}:`;
-                    runs.push(new TextRun({ text: prefix, bold: true, allCaps: true }));
+                    const prefixId = item.identifier ? `${item.identifier} ` : "";
+                    const prefix = `${prefixId}${item.speakerName || "LOCUTOR"}:`.toUpperCase();
+                    runs.push(new TextRun({ text: prefix, bold: true }));
 
                     if (item.intention) {
                         runs.push(new TextRun({ text: ` (${item.intention.toUpperCase()})`, bold: true }));
                     }
 
-                    runs.push(new TextRun({ text: `\t${pText}` }));
+                    runs.push(new TextRun({ text: "\t" }));
+                    runs.push(new TextRun({ text: pText }));
                 } else {
                     runs.push(new TextRun({ text: pText }));
                 }
@@ -83,6 +88,15 @@ export async function generateRadioScriptDocx(scriptData: RadioScript, settings:
                                 position: TWIPS_2CM,
                             }
                         ] : []
+                    })
+                );
+            });
+        } else if (item.type === "text") {
+            const paragraphs = item.text || [];
+            paragraphs.forEach((pText) => {
+                children.push(
+                    new Paragraph({
+                        children: [new TextRun({ text: pText })]
                     })
                 );
             });
@@ -113,6 +127,10 @@ export async function generateRadioScriptDocx(scriptData: RadioScript, settings:
             {
                 properties: {
                     page: {
+                        size: {
+                            width: 12240,
+                            height: 15840,
+                        },
                         margin: {
                             top: 720,
                             right: 720,

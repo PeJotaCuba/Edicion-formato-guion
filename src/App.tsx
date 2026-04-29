@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { Download, Loader2, Mic, RotateCcw, Sparkles, FileText, Upload, Settings } from 'lucide-react';
 import { generateRadioScriptDocx } from './services/docxService';
-import { RadioScript } from './services/geminiService';
+import { RadioScript } from './types';
 import * as mammoth from 'mammoth';
 import { parseScriptLocally } from './services/localParser';
 import { normalizeScriptNumbering } from './services/normalizeService';
@@ -20,12 +20,7 @@ export default function App() {
   const [lineSpacing, setLineSpacing] = useState<number>(1.15);
   const [paragraphSpacing, setParagraphSpacing] = useState<number>(6);
 
-  // Conversion flow states
-  const [showDocPrompt, setShowDocPrompt] = useState(false);
-  const [isConvertingDoc, setIsConvertingDoc] = useState(false);
-  const [docConversionSuccess, setDocConversionSuccess] = useState(false);
-  const [pendingDocFile, setPendingDocFile] = useState<File | null>(null);
-
+  const [selectionStats, setSelectionStats] = useState<{ paragraphs: number, lines: number, words: number, repetitions: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const processScriptText = async (textToProcess: string) => {
@@ -69,15 +64,6 @@ export default function App() {
 
     setError(null);
 
-    const isLegacyDoc = file.name.toLowerCase().endsWith('.doc') || file.type === 'application/msword';
-    
-    if (isLegacyDoc) {
-      setPendingDocFile(file);
-      setShowDocPrompt(true);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-      return;
-    }
-
     // Proceso normal para .docx
     try {
         const arrayBuffer = await file.arrayBuffer();
@@ -96,7 +82,7 @@ export default function App() {
             .trim();
             
         if (text.length < 20) {
-            throw new Error("El archivo no contenía texto legible o está dañado.");
+            throw new Error("El archivo no convirtiera texto legible.");
         }
             
         setInputText(text);
@@ -106,69 +92,62 @@ export default function App() {
         }
     } catch (err) {
         console.error("Error reading docx:", err);
-        setError("Error al leer el archivo. Asegúrese de que sea un archivo .docx de Word válido y no esté corrupto.");
+        setError("Error al leer el archivo. Asegúrese de que sea un archivo .docx válido.");
     }
   };
 
-  const executeDocConversion = async () => {
-    if (!pendingDocFile) return;
+  const getFileName = (script: RadioScript | null) => {
+    if (!script) return 'GUION_FORMATEADO.DOCX';
     
-    setIsConvertingDoc(true);
-    setError(null);
-    try {
-      const formData = new FormData();
-      formData.append("file", pendingDocFile);
-
-      const response = await fetch("/api/extract-doc", {
-        method: "POST",
-        body: formData
-      });
-
-      if (!response.ok) {
-        let errorMsg = "Error en la conversión del documento";
-        try {
-           const errData = await response.json();
-           if (errData.error) errorMsg = errData.error;
-        } catch(e) {}
-        throw new Error(errorMsg);
-      }
-
-      const data = await response.json();
-      const text = data.text;
-      
-      let cleanedText = text
-            .replace(/[ \t]{2,}/g, ' ')
-            .replace(/\n[ \t]+/g, '\n')
-            .replace(/\n\s*\n/g, '\n')
-            .trim();
-
-      if (cleanedText.length < 20) {
-        throw new Error("El archivo no contenía texto legible o está dañado.");
-      }
-
-      setInputText(cleanedText);
-      setIsConvertingDoc(false);
-      setDocConversionSuccess(true);
-      setPendingDocFile(null);
-      
-      setTimeout(() => {
-         setDocConversionSuccess(false);
-         setShowDocPrompt(false);
-         processScriptText(cleanedText);
-      }, 2500);
-
-    } catch (err: any) {
-      console.error("Error convirtiendo doc:", err);
-      setError(`Fallo al convertir el .doc: ${err.message}`);
-      setIsConvertingDoc(false);
-      setShowDocPrompt(false);
-      setPendingDocFile(null);
+    const programa = script.credits.find(c => c.label === 'PROGRAMA')?.value || '';
+    const fechaRaw = script.credits.find(c => c.label === 'FECHA')?.value || '';
+    
+    let fileName = 'GUION';
+    if (programa && programa !== '_________________________') {
+      fileName = programa.toUpperCase();
     }
-  };
 
-  const abortDocConversion = () => {
-    setShowDocPrompt(false);
-    setPendingDocFile(null);
+    if (fechaRaw && fechaRaw !== '_________________________') {
+        const months = ['ENE', 'FEB', 'MAR', 'ABR', 'MAY', 'JUN', 'JUL', 'AGO', 'SEP', 'OCT', 'NOV', 'DIC'];
+        const fullMonths = ['ENERO', 'FEBRERO', 'MARZO', 'ABRIL', 'MAYO', 'JUNIO', 'JULIO', 'AGOSTO', 'SEPTIEMBRE', 'OCTUBRE', 'NOVIEMBRE', 'DICIEMBRE'];
+
+        let day = '';
+        let month = '';
+        let year = '';
+
+        // Buscar números de 1 o 2 dígitos para el día
+        const numbers = fechaRaw.match(/\d+/g);
+        if (numbers) {
+            if (numbers[0]) day = numbers[0];
+            // Si hay un segundo número que parece año (4 dígitos)
+            const possibleYear = numbers.find(n => n.length === 4);
+            if (possibleYear) year = possibleYear;
+        }
+
+        const upperFecha = fechaRaw.toUpperCase();
+        for (let i = 0; i < fullMonths.length; i++) {
+            if (upperFecha.includes(fullMonths[i])) {
+                month = months[i];
+                break;
+            }
+        }
+
+        if (day && month && year) {
+            fileName += ` ${day} ${month} ${year}`;
+        } else if (day && month) {
+             fileName += ` ${day} ${month}`;
+        } else {
+            // Fallback: limpiar un poco el string original (quitar "DE", "DEL")
+            const cleaned = fechaRaw.toUpperCase()
+                .replace(/\bDE\b/g, '')
+                .replace(/\bDEL\b/g, '')
+                .replace(/\s+/g, ' ')
+                .trim();
+            fileName += ` ${cleaned}`;
+        }
+    }
+    
+    return `${fileName.trim()}.DOCX`;
   };
 
   const handleDownload = async () => {
@@ -177,9 +156,12 @@ export default function App() {
     try {
       const blob = await generateRadioScriptDocx(scriptData, { fontSize, lineSpacing, paragraphSpacing });
       const url = URL.createObjectURL(blob);
+      
+      const fileName = getFileName(scriptData);
+      
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'Guion_Formateado.docx';
+      a.download = fileName;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -190,65 +172,40 @@ export default function App() {
     }
   };
 
-  const technicalLinesCount = scriptData?.body.filter(i => i.type === 'sound').length || 0;
-  const interventionsCount = scriptData?.body.filter(i => i.type === 'speaker').length || 0;
+  const handleSelection = () => {
+    const selection = window.getSelection();
+    const selectedText = selection?.toString().trim();
+
+    if (!selectedText || selectedText.length === 0) {
+      setSelectionStats(null);
+      return;
+    }
+
+    // Calcular stats de la selección
+    const paragraphs = selectedText.split(/\n+/).filter(p => p.trim().length > 0).length;
+    const wordsArr = selectedText.split(/\s+/).filter(w => w.length > 0);
+    const words = wordsArr.length;
+    // Estimación de líneas basada en saltos de línea + envoltura básica (asumimos ~80 caracteres por línea)
+    const lineBreaks = selectedText.split('\n').length;
+    const lines = Math.max(lineBreaks, Math.ceil(selectedText.length / 80));
+
+    // Calcular repeticiones del texto seleccionado en todo el guion (texto de entrada o procesado)
+    let repetitions = 0;
+    if (scriptData) {
+        const fullText = scriptData.body.map(item => item.text.join(' ')).join(' ');
+        // Escapar caracteres especiales para regex
+        const escapedSelection = selectedText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const regex = new RegExp(escapedSelection, 'gi');
+        const matches = fullText.match(regex);
+        repetitions = matches ? matches.length : 0;
+    }
+
+    setSelectionStats({ paragraphs, lines, words, repetitions });
+  };
 
   return (
     <div className="bg-slate-100 flex flex-col h-screen overflow-hidden text-slate-800 font-sans">
       
-      {/* Doc Conversion Modal */}
-      {showDocPrompt && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-lg shadow-2xl max-w-sm w-full p-6 text-center transform transition-all">
-            {!docConversionSuccess ? (
-               <>
-                 <div className="flex justify-center mb-4">
-                   {isConvertingDoc ? (
-                     <Loader2 className="w-12 h-12 text-indigo-600 animate-spin" />
-                   ) : (
-                     <FileText className="w-12 h-12 text-orange-500" />
-                   )}
-                 </div>
-                 <h2 className="text-lg font-bold text-slate-800 mb-2 uppercase">
-                   {isConvertingDoc ? 'Convirtiendo...' : 'Archivo antiguo detectado'}
-                 </h2>
-                 <p className="text-sm text-slate-600 mb-6">
-                   {isConvertingDoc 
-                     ? 'Por favor, espere mientras procesamos y extraemos el contenido del documento .doc internamente.'
-                     : 'Se ha cargado un archivo formato .doc (Word antiguo). Es necesario convertirlo internamente para poder procesarlo correctamente.'}
-                 </p>
-                 {!isConvertingDoc && (
-                   <div className="flex justify-center space-x-3">
-                     <button 
-                       onClick={abortDocConversion}
-                       className="px-4 py-2 border border-slate-300 rounded font-bold text-xs text-slate-600 hover:bg-slate-50 transition-colors uppercase"
-                     >
-                       Cancelar
-                     </button>
-                     <button 
-                       onClick={executeDocConversion}
-                       className="px-4 py-2 bg-indigo-600 rounded font-bold text-xs text-white hover:bg-indigo-700 shadow-md transition-colors uppercase"
-                     >
-                       Convertir
-                     </button>
-                   </div>
-                 )}
-               </>
-            ) : (
-               <>
-                 <div className="flex justify-center mb-4">
-                   <div className="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center">
-                     <Sparkles className="w-6 h-6 text-green-600" />
-                   </div>
-                 </div>
-                 <h2 className="text-lg font-bold text-slate-800 mb-2 uppercase">¡Conversión Exitosa!</h2>
-                 <p className="text-sm text-slate-600">El guion está listo para ser procesado.</p>
-               </>
-            )}
-          </div>
-        </div>
-      )}
-
       {/* Header Navigation */}
       <header className="bg-white border-b border-slate-300 px-4 sm:px-6 py-3 sm:py-4 flex flex-col sm:flex-row justify-between items-center shadow-sm shrink-0 z-20 gap-3 sm:gap-0">
         <div className="flex items-center space-x-2 sm:space-x-3 w-full sm:w-auto justify-center sm:justify-start">
@@ -259,7 +216,9 @@ export default function App() {
         </div>
         <div className="flex items-center space-x-4 w-full sm:w-auto justify-center sm:justify-end">
           {scriptData && (
-            <span className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-widest hidden md:inline-block">Documento: Guion_Formateado.docx</span>
+            <span className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-widest hidden md:inline-block">
+                Documento: {getFileName(scriptData)}
+            </span>
           )}
           <button 
             onClick={handleDownload}
@@ -307,21 +266,21 @@ export default function App() {
             {/* Action Bar: File Upload */}
             <div className="flex items-center justify-between">
                 <div>
-                   <input 
-                     type="file" 
-                     accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" 
-                     ref={fileInputRef}
-                     onChange={handleFileUpload} 
-                     className="hidden" 
-                     id="docx-upload"
-                   />
-                   <label 
-                     htmlFor="docx-upload" 
-                     className="cursor-pointer bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded text-xs font-bold uppercase tracking-wider flex items-center shadow-sm transition-colors"
-                   >
-                     <Upload className="w-4 h-4 mr-2" />
-                     CARGAR DOCX / DOC
-                   </label>
+                    <input 
+                      type="file" 
+                      accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" 
+                      ref={fileInputRef}
+                      onChange={handleFileUpload} 
+                      className="hidden" 
+                      id="docx-upload"
+                    />
+                    <label 
+                      htmlFor="docx-upload" 
+                      className="cursor-pointer bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded text-xs font-bold uppercase tracking-wider flex items-center shadow-sm transition-colors"
+                    >
+                      <Upload className="w-4 h-4 mr-2" />
+                      CARGAR .DOCX
+                    </label>
                 </div>
             </div>
 
@@ -412,14 +371,18 @@ export default function App() {
             </span>
           </div>
           
-          <div className="flex-1 py-12 px-8 overflow-y-auto shadow-inner flex justify-center bg-slate-200">
-            {/* The "Paper" */}
+          <div 
+            className="flex-1 py-12 px-8 overflow-y-auto shadow-inner flex justify-center bg-slate-200"
+            onMouseUp={handleSelection}
+            onKeyUp={handleSelection}
+          >
+            {/* The "Paper" - Carta (Letter) Size: 21.59cm x 27.94cm */}
             <div 
-              className="w-full max-w-[21cm] h-fit min-h-[29.7cm] bg-white shadow-2xl relative" 
+              className="w-full max-w-[21.59cm] h-fit min-h-[27.94cm] bg-white shadow-2xl relative" 
             >
               {scriptData ? (
                 <div 
-                    className="p-8 sm:p-[1.27cm]"
+                    className="p-8 sm:p-[1.27cm] select-text"
                     style={{ 
                         fontFamily: 'Arial, sans-serif',
                         fontSize: `${fontSize}pt`,
@@ -447,18 +410,18 @@ export default function App() {
                              const cleanText = idx === 0 ? p.replace(/^(?:SON|OP)\s*:?\s*/i, '').trim() : p;
                              return (
                                <div key={`${i}-${idx}`} style={{ paddingLeft: '2cm', textIndent: idx === 0 ? '-2cm' : '0' }}>
-                                 {idx === 0 && <span className="font-bold uppercase">{item.identifier} SON </span>}
+                                 {idx === 0 && <span className="font-bold uppercase">{item.identifier} SON: </span>}
                                  <span className="font-bold uppercase underline underline-offset-2">{cleanText}</span>
                                </div>
                              );
                          });
-                      } else {
+                      } else if (item.type === 'speaker') {
                          const paragraphs = item.text || [];
                          return paragraphs.map((p, idx) => (
                              <div key={`${i}-${idx}`} style={{ paddingLeft: '2cm', textIndent: idx === 0 ? '-2cm' : '0' }}>
                                {idx === 0 && (
                                    <>
-                                     <span className="font-bold uppercase">{item.identifier} {item.speakerName || 'LOCUTOR'}:</span>
+                                     <span className="font-bold uppercase">{item.identifier ? `${item.identifier} ` : ''}{item.speakerName || 'LOCUTOR'}:</span>
                                      {item.intention && <span className="font-bold uppercase"> ({item.intention})</span>}
                                      <span> </span>
                                    </>
@@ -466,6 +429,13 @@ export default function App() {
                                <span>{p}</span>
                              </div>
                          ));
+                      } else if (item.type === 'text') {
+                        const paragraphs = item.text || [];
+                        return paragraphs.map((p, idx) => (
+                            <div key={`${i}-${idx}`} className="text-slate-700">
+                              <span>{p}</span>
+                            </div>
+                        ));
                       }
                     })}
                   </div>
@@ -485,15 +455,24 @@ export default function App() {
       </main>
 
       {/* Footer Status Bar */}
-      <footer className="bg-slate-900 text-slate-400 py-2 px-4 sm:px-6 flex justify-between items-center text-[10px] sm:text-[11px] font-mono shrink-0 z-20">
-        <div className="flex space-x-4 sm:space-x-6 overflow-x-auto whitespace-nowrap hide-scrollbar">
-          <span className="flex items-center"><span className="w-2 h-2 bg-green-500 rounded-full mr-2"></span>SISTEMA ACTIVO</span>
-          <span>CARACTERES: {inputText.length}</span>
-          <span>LÍNEAS TÉCNICAS: {technicalLinesCount}</span>
-          <span>INTERVENCIONES: {interventionsCount}</span>
-        </div>
-        <div className="hidden sm:block">
-          LICENCIA PROFESIONAL: #RAD-992-00
+      <footer className="bg-slate-900 border-t border-slate-700 text-slate-200 py-2.5 px-4 sm:px-6 flex justify-between items-center text-[10px] sm:text-[11px] font-mono shrink-0 z-20">
+        <div className="flex space-x-6 overflow-x-auto whitespace-nowrap hide-scrollbar flex-1">
+          {selectionStats ? (
+            <div className="flex space-x-6 text-indigo-300 font-bold items-center">
+               <span className="text-white bg-indigo-600 px-1.5 py-0.5 rounded text-[9px]">SELECCIÓN</span>
+               <span>{selectionStats.paragraphs} PÁRRAFOS</span>
+               <span>{selectionStats.lines} LÍNEAS</span>
+               <span>{selectionStats.words} PALABRAS</span>
+               {selectionStats.words > 0 && selectionStats.words < 10 && (
+                   <span className="bg-slate-800 px-2 py-0.5 rounded text-white border border-slate-700">REPETICIONES: {selectionStats.repetitions} VECES</span>
+               )}
+            </div>
+          ) : (
+            <div className="flex items-center space-x-2">
+                <div className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse"></div>
+                <span className="italic text-slate-500">Seleccione texto en la vista previa para ver estadísticas de locución...</span>
+            </div>
+          )}
         </div>
       </footer>
     </div>
