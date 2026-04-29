@@ -6,8 +6,6 @@ import * as mammoth from 'mammoth';
 import { parseScriptLocally } from './services/localParser';
 import { normalizeScriptNumbering } from './services/normalizeService';
 
-import { extractDoc } from './services/docExtractor';
-
 export default function App() {
   const [inputText, setInputText] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -127,7 +125,7 @@ export default function App() {
       });
 
       if (!response.ok) {
-        let errorMsg = "Error en la conversión del documento server-side";
+        let errorMsg = "Error en la conversión del documento";
         try {
            const errData = await response.json();
            if (errData.error) errorMsg = errData.error;
@@ -161,7 +159,7 @@ export default function App() {
 
     } catch (err: any) {
       console.error("Error convirtiendo doc:", err);
-      setError(`Fallo al convertir internamente el .doc: ${err.message}`);
+      setError(`Fallo al convertir el .doc: ${err.message}`);
       setIsConvertingDoc(false);
       setShowDocPrompt(false);
       setPendingDocFile(null);

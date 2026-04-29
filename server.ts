@@ -3,6 +3,7 @@ import { createServer as createViteServer } from "vite";
 import multer from "multer";
 import WordExtractor from "word-extractor";
 import * as path from "path";
+import * as fs from "fs";
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -10,36 +11,24 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  // API endpoints
+  // Use a higher limit for JSON if needed
+  app.use(express.json({ limit: "10mb" }));
+
+  // API Route for .doc extraction
   app.post("/api/extract-doc", upload.single("file"), async (req, res) => {
     try {
       if (!req.file) {
-        res.status(400).json({ error: "No file provided" });
-        return;
+        return res.status(400).json({ error: "No file uploaded" });
       }
-      let text = '';
-      try {
-        const extractor = new WordExtractor();
-        const document = await extractor.extract(req.file.buffer);
-        text = document.getBody();
-      } catch (extError) {
-        console.warn("word-extractor failed, using fallback manual extraction", extError);
-        // Fallback para extraer el texto legible desde la codificación binaria en archivos .doc de Word 97-2003
-        const decoder = new TextDecoder('windows-1252'); 
-        let rawText = decoder.decode(req.file.buffer);
-        
-        // Eliminar nulos que separan caracteres en UTF-16LE dentro de .doc viejo
-        rawText = rawText.replace(/\u0000/g, '');
-        
-        // Reemplazar cualquier caracter que no sea estándar ASCII, espacios o caracteres comunes españoles con un salto de línea
-        const validChars = /[^a-zA-Z0-9\s.,;:'"?!¿¡()\[\]\-_áéíóúÁÉÍÓÚñÑüÜºª%@#$&+=*<>]/g;
-        text = rawText.replace(validChars, '\n');
-      }
+
+      const extractor = new WordExtractor();
+      const extract = await extractor.extract(req.file.buffer);
+      const text = extract.getBody();
 
       res.json({ text });
     } catch (error: any) {
-      console.error("Error extracting doc:", error);
-      res.status(500).json({ error: error.message || "Failed to extract doc" });
+      console.error("Extraction error:", error);
+      res.status(500).json({ error: error.message || "Error extracting document" });
     }
   });
 
@@ -52,10 +41,14 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
+    if (fs.existsSync(distPath)) {
+        app.use(express.static(distPath));
+        app.get('*', (req, res) => {
+          res.sendFile(path.join(distPath, 'index.html'));
+        });
+    } else {
+        console.warn("Dist folder not found, running in production without static files served by express.");
+    }
   }
 
   app.listen(PORT, "0.0.0.0", () => {
@@ -63,4 +56,6 @@ async function startServer() {
   });
 }
 
-startServer();
+startServer().catch(err => {
+    console.error("Failed to start server:", err);
+});
