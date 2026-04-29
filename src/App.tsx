@@ -106,6 +106,8 @@ export default function App() {
     }
   };
 
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
   const processScriptText = async (textToProcess: string) => {
     if (!textToProcess.trim()) return;
     setIsProcessing(true);
@@ -125,7 +127,9 @@ export default function App() {
              setActiveTab('preview');
           }
           setTimeout(() => {
-             previewRef.current?.scrollIntoView({ behavior: 'smooth' });
+             if (scrollContainerRef.current) {
+                scrollContainerRef.current.scrollTop = 0;
+             }
           }, 300);
       } else {
           throw new Error("No se pudo extraer el contenido. Revise el archivo.");
@@ -143,6 +147,11 @@ export default function App() {
   };
 
   const handleClear = () => {
+    if (inputText.trim() || scriptData) {
+      if (!window.confirm("¿Seguro que desea LIMPIAR todo? Se perderá el texto actual y el guion generado.")) {
+          return;
+      }
+    }
     setInputText('');
     setScriptData(null);
     setOriginalScriptData(null);
@@ -448,18 +457,18 @@ export default function App() {
         </div>
       </header>
 
-      <main className="flex-1 flex flex-col md:flex-row overflow-hidden">
+      <main className="flex-1 flex flex-col md:flex-row overflow-hidden min-h-0 bg-slate-100">
         
         {/* Mobile Tabs */}
-        <div className="md:hidden flex bg-slate-200 p-2 shrink-0 space-x-2">
+        <div className="md:hidden flex bg-white border-b border-slate-200 p-2 shrink-0 space-x-2 z-20">
           <button 
-            className={`flex-1 py-2 text-[10px] font-bold uppercase rounded shadow-sm ${activeTab === 'input' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-500'}`}
+            className={`flex-1 py-3 text-xs font-bold uppercase rounded transition-all ${activeTab === 'input' ? 'bg-indigo-600 text-white shadow-md' : 'bg-slate-100 text-slate-500'}`}
             onClick={() => setActiveTab('input')}
           >
-            Entrar Datos
+            Entrada Datos
           </button>
           <button 
-             className={`flex-1 py-2 text-[10px] font-bold uppercase rounded shadow-sm ${activeTab === 'preview' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-500'}`}
+             className={`flex-1 py-3 text-xs font-bold uppercase rounded transition-all ${activeTab === 'preview' ? 'bg-indigo-600 text-white shadow-md' : 'bg-slate-100 text-slate-500'}`}
              onClick={() => setActiveTab('preview')}
           >
              Vista Previa
@@ -467,22 +476,15 @@ export default function App() {
         </div>
 
         {/* Input Area */}
-        <section className={`w-full md:w-1/3 md:min-w-[320px] md:max-w-[500px] border-b md:border-b-0 md:border-r border-slate-300 bg-slate-50 flex-col z-10 overflow-y-auto ${activeTab === 'input' ? 'flex' : 'hidden md:flex'}`}>
+        <section className={`w-full md:w-1/3 md:min-w-[320px] md:max-w-[450px] border-b md:border-b-0 md:border-r border-slate-300 bg-slate-50 flex-col z-10 overflow-hidden ${activeTab === 'input' ? 'flex' : 'hidden md:flex'}`}>
           <div className="p-4 border-b border-slate-200 bg-slate-100 flex justify-between items-center shrink-0">
             <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">Entrada & Configuración</span>
-            <button 
-              onClick={handleClear}
-              className="text-indigo-600 text-xs font-bold hover:underline flex items-center"
-            >
-              <RotateCcw className="w-3 h-3 mr-1" />
-              LIMPIAR
-            </button>
           </div>
-          <div className="flex-1 p-4 flex flex-col gap-4">
+          <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-6">
             
             {/* Action Bar: File Upload */}
             <div className="flex items-center justify-between">
-                <div>
+                <div className="w-full">
                     <input 
                       type="file" 
                       accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" 
@@ -493,32 +495,44 @@ export default function App() {
                     />
                     <label 
                       htmlFor="docx-upload" 
-                      className="cursor-pointer bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded text-xs font-bold uppercase tracking-wider flex items-center shadow-sm transition-colors"
+                      className="cursor-pointer w-full bg-white border border-dashed border-indigo-200 hover:border-indigo-400 hover:bg-white text-slate-600 px-4 py-8 rounded-xl text-[10px] font-bold uppercase tracking-wider flex flex-col items-center justify-center transition-all shadow-sm group"
                     >
-                      <Upload className="w-4 h-4 mr-2" />
-                      CARGAR .DOCX
+                      <Upload className="w-8 h-8 mb-3 text-indigo-500 group-hover:scale-110 transition-transform" />
+                      <span>Cargar Documento (.docx)</span>
                     </label>
                 </div>
             </div>
 
             {error && (
-              <div className="bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded text-xs font-medium">
+              <div className="p-4 bg-red-50 border border-red-200 text-red-600 rounded-lg text-xs font-medium animate-shake">
                 {error}
               </div>
             )}
-            <textarea 
-              className="flex-1 min-h-[200px] w-full bg-white border border-slate-300 rounded p-4 text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none resize-none shadow-inner" 
-              placeholder="Pegue aquí el texto original o cargue un archivo .docx..."
-              value={inputText}
-              onChange={(e) => setInputText(e.target.value)}
-              disabled={isProcessing}
-            />
+            <div className="flex-1 flex flex-col min-h-[250px]">
+              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5 ml-1 flex justify-between items-center">
+                <span>Texto a Formatear</span>
+                <button 
+                  onClick={handleClear}
+                  className="text-indigo-600 hover:text-indigo-800 flex items-center transition-colors"
+                >
+                  <RotateCcw className="w-3 h-3 mr-1" />
+                  REINICIAR
+                </button>
+              </label>
+              <textarea 
+                className="flex-1 w-full bg-white border border-slate-300 rounded-xl p-4 text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none resize-none shadow-sm transition-shadow" 
+                placeholder="Pegue aquí el texto original o cargue un archivo .docx..."
+                value={inputText}
+                onChange={(e) => setInputText(e.target.value)}
+                disabled={isProcessing}
+              />
+            </div>
 
             {/* Formatting Settings */}
-            <div className="bg-white p-4 border border-slate-200 rounded shadow-sm space-y-4">
-                <div className="flex items-center space-x-2 text-slate-700 mb-2">
-                    <Settings className="w-4 h-4" />
-                    <span className="text-xs font-bold uppercase tracking-wider">AJUSTES DEL GUION FINAL</span>
+            <div className="bg-white p-4 border border-slate-200 rounded-lg shadow-sm space-y-4">
+                <div className="flex items-center space-x-2 text-slate-700 mb-2 border-b border-slate-50 pb-2">
+                    <Settings className="w-4 h-4 text-indigo-500" />
+                    <span className="text-[10px] font-bold uppercase tracking-widest">Ajustes de Edición</span>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1">
@@ -526,7 +540,7 @@ export default function App() {
                         <select 
                             value={fontSize} 
                             onChange={(e) => setFontSize(Number(e.target.value))}
-                            className="w-full bg-slate-50 border border-slate-300 rounded px-2 py-1 text-sm text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            className="w-full bg-slate-50 border border-slate-300 rounded px-2 py-1.5 text-sm text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                         >
                             <option value={12}>12 pt</option>
                             <option value={13}>13 pt</option>
@@ -538,11 +552,11 @@ export default function App() {
                         <select 
                             value={lineSpacing} 
                             onChange={(e) => setLineSpacing(Number(e.target.value))}
-                            className="w-full bg-slate-50 border border-slate-300 rounded px-2 py-1 text-sm text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            className="w-full bg-slate-50 border border-slate-300 rounded px-2 py-1.5 text-sm text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                         >
-                            <option value={1}>Sencillo (1.0)</option>
-                            <option value={1.15}>Múltiple (1.15)</option>
-                            <option value={1.5}>1.5 líneas</option>
+                            <option value={1}>1.0</option>
+                            <option value={1.15}>1.15</option>
+                            <option value={1.5}>1.5</option>
                         </select>
                     </div>
                     <div className="space-y-1 col-span-2">
@@ -550,7 +564,7 @@ export default function App() {
                         <select 
                             value={paragraphSpacing} 
                             onChange={(e) => setParagraphSpacing(Number(e.target.value))}
-                            className="w-full bg-slate-50 border border-slate-300 rounded px-2 py-1 text-sm text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            className="w-full bg-slate-50 border border-slate-300 rounded px-2 py-1.5 text-sm text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                         >
                             <option value={3}>3 pt</option>
                             <option value={6}>6 pt</option>
@@ -563,12 +577,12 @@ export default function App() {
             <button
               onClick={handleGenerate}
               disabled={isProcessing || !inputText.trim()}
-              className="w-full bg-slate-800 hover:bg-slate-900 text-white px-4 py-3 rounded font-bold text-sm flex items-center justify-center shadow-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+              className="w-full bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-4 rounded-xl font-bold text-sm flex items-center justify-center shadow-lg shadow-indigo-100 transition-all disabled:opacity-50 disabled:cursor-not-allowed shrink-0 mb-4"
             >
               {isProcessing ? (
                 <>
                   <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                  PROCESANDO...
+                  GENERANDO...
                 </>
               ) : (
                 <>
@@ -584,7 +598,7 @@ export default function App() {
         <section 
            ref={previewRef}
            style={{ WebkitOverflowScrolling: 'touch' }}
-           className={`flex-1 bg-white flex-col relative ${activeTab === 'preview' ? 'flex' : 'hidden md:flex'}`}
+           className={`flex-1 flex flex-col relative overflow-hidden bg-slate-200 min-h-0 ${activeTab === 'preview' ? 'flex' : 'hidden md:flex'}`}
         >
           {scriptData && (
              <EditorToolbar 
@@ -596,122 +610,120 @@ export default function App() {
           )}
 
           <div 
-            className="flex-1 py-12 px-8 overflow-y-auto flex flex-col items-center bg-white relative pb-32"
+            ref={scrollContainerRef}
+            className="flex-1 overflow-y-auto w-full flex flex-col items-center bg-slate-100 relative py-12 pb-64"
             onMouseUp={handleSelection}
             onKeyUp={handleSelection}
           >
-            {/* The "Paper" - Carta (Letter) Size: 21.59cm x 27.94cm */}
-            <div 
-              className="w-full max-w-[21.59cm] min-h-[27.94cm] h-auto flex flex-col bg-white relative mb-12 pb-16" 
-            >
-              {scriptData ? (
+            {scriptData ? (
+                /* The "Paper" - Carta (Letter) Size: 21.59cm x 27.94cm. Using flex-col and h-auto to ensure background covers all text. */
                 <div 
-                    className="p-8 sm:p-[1.27cm]"
-                      style={{ 
-                          fontFamily: 'Arial, sans-serif',
-                          fontSize: `${fontSize}pt`,
-                          lineHeight: lineSpacing
-                      }}
-                  >
-                  {/* Page number on preview */}
-                  <div className="absolute top-[1.27cm] right-[1.27cm] font-bold font-arial text-[12pt]">1</div>
-
-                  {/* Header Block */}
-                  <div className="mb-8 space-y-2">
-                    {scriptData.credits.map((c, i) => (
-                      <div key={i} className="leading-snug">
-                        <span className="font-bold uppercase">{c.label}: </span>
-                        <EditorBlock 
-                            html={c.value}
-                            onChange={(html) => updateCredit(i, html)}
-                            className="inline"
-                        />
+                  className="w-full max-w-[21.59cm] min-h-[27.94cm] h-auto bg-white shadow-xl relative mb-12 flex flex-col shrink-0" 
+                >
+                    <div 
+                        className="p-8 sm:p-[1.5cm] sm:pt-[2cm] sm:pb-[2.5cm] flex-1"
+                          style={{ 
+                              fontFamily: 'Arial, sans-serif',
+                              fontSize: `${fontSize}pt`,
+                              lineHeight: lineSpacing,
+                              color: '#000'
+                          }}
+                      >
+                      {/* Header Block */}
+                      <div className="mb-10 space-y-2 border-b border-slate-100 pb-6">
+                        {scriptData.credits.map((c, i) => (
+                          <div key={i} className="leading-snug">
+                            <span className="font-bold uppercase">{c.label}: </span>
+                            <EditorBlock 
+                                html={c.value}
+                                onChange={(html) => updateCredit(i, html)}
+                                className="inline"
+                            />
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
 
-                  {/* Script Content */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: `${paragraphSpacing}pt` }}>
-                    {scriptData.body.map((item, i) => {
-                      if (item.type === 'sound') {
-                         const paragraphs = item.text || [];
-                         return paragraphs.map((p, idx) => {
-                             const cleanText = idx === 0 ? p.replace(/^(?:SON|OP)\s*:?\s*/i, '').trim() : p;
-                             return (
-                               <div key={`${i}-${idx}`} style={{ paddingLeft: '2cm', textIndent: idx === 0 ? '-2cm' : '0' }}>
-                                 {idx === 0 && (
-                                     <span className="font-bold uppercase">
-                                       <EditorBlock 
-                                          html={`${item.identifier} SON:`}
-                                          onChange={(html) => updateSpeakerProps(i, html, 'name')}
-                                          className="inline"
-                                       /> 
-                                     </span>
-                                 )}
-                                 <EditorBlock 
-                                    html={cleanText}
-                                    onChange={(html) => updateScriptBodyText(i, idx, html)}
-                                    className="font-bold uppercase underline underline-offset-2 inline" 
-                                 />
-                               </div>
-                             );
-                         });
-                      } else if (item.type === 'speaker') {
-                         const paragraphs = item.text || [];
-                         return paragraphs.map((p, idx) => (
-                             <div key={`${i}-${idx}`} style={{ paddingLeft: '2cm', textIndent: idx === 0 ? '-2cm' : '0' }}>
-                               {idx === 0 && (
-                                   <>
-                                     <span className="font-bold uppercase">
-                                       <EditorBlock 
-                                          html={`${item.identifier ? `${item.identifier} ` : ''}${item.speakerName || 'LOCUTOR'}:`}
-                                          onChange={(html) => updateSpeakerProps(i, html, 'name')}
-                                          className="inline"
-                                       />
-                                     </span>
-                                     {item.intention && <span className="font-bold uppercase"> 
-                                        <EditorBlock 
-                                           html={`(${item.intention})`}
-                                           onChange={(html) => updateSpeakerProps(i, html, 'intention')} 
-                                           className="inline"
-                                        />
-                                     </span>}
-                                     <span> </span>
-                                   </>
-                               )}
-                               <EditorBlock 
-                                   html={p}
-                                   onChange={(html) => updateScriptBodyText(i, idx, html)}
-                                   className="inline" 
-                               />
-                             </div>
-                         ));
-                      } else if (item.type === 'text') {
-                        const paragraphs = item.text || [];
-                        return paragraphs.map((p, idx) => (
-                            <div key={`${i}-${idx}`} className="text-slate-700" style={{ paddingLeft: '2cm' }}>
-                              <EditorBlock 
-                                   html={p}
-                                   onChange={(html) => updateScriptBodyText(i, idx, html)}
-                                   className="inline" 
-                               />
-                            </div>
-                        ));
-                      }
-                    })}
-                  </div>
+                      {/* Script Content */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: `${paragraphSpacing}pt` }}>
+                        {scriptData.body.map((item, i) => {
+                          if (item.type === 'sound') {
+                             const paragraphs = item.text || [];
+                             return paragraphs.map((p, idx) => {
+                                 const cleanText = idx === 0 ? p.replace(/^(?:SON|OP)\s*:?\s*/i, '').trim() : p;
+                                 return (
+                                   <div key={`${i}-${idx}`} style={{ paddingLeft: '2cm', textIndent: idx === 0 ? '-2cm' : '0' }}>
+                                     {idx === 0 && (
+                                         <span className="font-bold uppercase">
+                                           <EditorBlock 
+                                              html={`${item.identifier} SON:`}
+                                              onChange={(html) => updateSpeakerProps(i, html, 'name')}
+                                              className="inline"
+                                           /> 
+                                         </span>
+                                     )}
+                                     <EditorBlock 
+                                        html={cleanText}
+                                        onChange={(html) => updateScriptBodyText(i, idx, html)}
+                                        className="font-bold uppercase underline underline-offset-2 inline" 
+                                     />
+                                   </div>
+                                 );
+                             });
+                          } else if (item.type === 'speaker') {
+                             const paragraphs = item.text || [];
+                             return paragraphs.map((p, idx) => (
+                                 <div key={`${i}-${idx}`} style={{ paddingLeft: '2cm', textIndent: idx === 0 ? '-2cm' : '0' }}>
+                                   {idx === 0 && (
+                                       <>
+                                         <span className="font-bold uppercase">
+                                           <EditorBlock 
+                                              html={`${item.identifier ? `${item.identifier} ` : ''}${item.speakerName || 'LOCUTOR'}:`}
+                                              onChange={(html) => updateSpeakerProps(i, html, 'name')}
+                                              className="inline"
+                                           />
+                                         </span>
+                                         {item.intention && <span className="font-bold uppercase"> 
+                                            <EditorBlock 
+                                               html={`(${item.intention})`}
+                                               onChange={(html) => updateSpeakerProps(i, html, 'intention')} 
+                                               className="inline"
+                                            />
+                                         </span>}
+                                         <span> </span>
+                                       </>
+                                   )}
+                                   <EditorBlock 
+                                       html={p}
+                                       onChange={(html) => updateScriptBodyText(i, idx, html)}
+                                       className="inline"
+                                   />
+                                 </div>
+                             ));
+                          } else if (item.type === 'text') {
+                            const paragraphs = item.text || [];
+                            return paragraphs.map((p, idx) => (
+                                <div key={`${i}-${idx}`} className="text-slate-700" style={{ paddingLeft: '2cm' }}>
+                                  <EditorBlock 
+                                       html={p}
+                                       onChange={(html) => updateScriptBodyText(i, idx, html)}
+                                       className="inline" 
+                                   />
+                                </div>
+                            ));
+                          }
+                        })}
+                      </div>
+                    </div>
                 </div>
-              ) : (
-                <div className="h-full flex flex-col items-center justify-center text-slate-300 space-y-4 py-32">
-                   <FileText className="w-16 h-16 opacity-50" />
-                   <p className="font-mono text-sm uppercase tracking-widest text-center">
-                     El guion formateado aparecerá aquí.<br/>
-                     Ingrese texto y presione generar.
-                   </p>
+            ) : (
+                <div className="flex-1 flex flex-col items-center justify-center text-slate-400 p-8 text-center max-w-sm">
+                    <div className="bg-slate-300 w-24 h-24 rounded-full flex items-center justify-center mb-6 shadow-inner">
+                        <Sparkles className="w-12 h-12 text-slate-100" />
+                    </div>
+                    <h3 className="font-bold text-slate-600 uppercase tracking-widest mb-2">Editor Radiofónico</h3>
+                    <p className="text-sm">Pegue su texto en el panel izquierdo y presione <strong>GENERAR FORMATO</strong> para comenzar la edición profesional.</p>
                 </div>
-              )}
-            </div>
-
+            )}
           </div>
         </section>
       </main>

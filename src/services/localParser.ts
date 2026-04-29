@@ -7,13 +7,23 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
     // First pass: Identify dynamic speaker names that are numbered explicitly or known
     const knownSpeakers = new Set<string>(['LOC', 'LOCUTOR', 'LOCUTORA', 'PERIODISTA', 'ANIMADOR', 'ANIMADORA']);
     for (const p of paragraphs) {
+        // En primer lugar intentamos atrapar los que tienen formato con dos puntos
         const docNameMatch = p.match(/^[\(]?(\d+)[\)]?[\s.-]*([^:.]+)[.:]+\s*(.*)$/i);
         if (docNameMatch) {
             const name = docNameMatch[2].trim().toUpperCase();
-            // Evitar que agarre párrafos grandes por error
             if (name.length < 25) {
                 knownSpeakers.add(name);
             }
+        } else {
+             // En segundo lugar intentamos atrapar los que empiezan por numero e inmediatamente el nombre en mayuscula (ej. "02 LUIS")
+             // Aceptamos nombres compuestos de hasta 30 caracteres
+             const numMatch = p.match(/^[\(]?(\d+)[\)]?[\s.-]*([A-ZÁÉÍÓÚÑa-záéíóúñ\s]{2,30})\b/i);
+             if (numMatch) {
+                 const potentialName = numMatch[2].trim().toUpperCase();
+                 if (potentialName && !/^(SON|SONIDO|OP|EFECTO|MÚSICA|CREDITOS|PÁGINA)$/i.test(potentialName)) {
+                     knownSpeakers.add(potentialName);
+                 }
+             }
         }
     }
 
@@ -65,7 +75,7 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
             speakerOriginalName = originalName;
         } else {
             // Attempt format 2: No colon, but explicit number + known speaker
-            const noColonMatch = p.match(/^[\(]?(\d+)[\)]?[\s.-]*([A-ZÁÉÍÓÚÑa-záéíóúñ]{2,15})\b\s*(?:\(([^)]+)\))?\s*(.*)$/i);
+            const noColonMatch = p.match(/^[\(]?(\d+)[\)]?[\s.-]*([A-ZÁÉÍÓÚÑa-záéíóúñ\s]{2,30})\b\s*(?:\(([^)]+)\))?\s*(.*)$/i);
             if (noColonMatch) {
                 let originalName = noColonMatch[2].trim();
                 let tempName = originalName.toUpperCase();

@@ -95,8 +95,8 @@ export function InformeModal({ original, current, onClose }: InformeModalProps) 
     if (comments.length > 0) {
       children.push(new Paragraph({ text: "Comentarios Insertados", heading: HeadingLevel.HEADING_2, spacing: { before: 400, after: 200 } }));
       comments.forEach(c => {
-         children.push(new Paragraph({ text: `Contexto: ${c.context}`, bold: true, spacing: { before: 200 } }));
-         children.push(new Paragraph({ text: `"${c.selectedText}"`, italics: true }));
+         children.push(new Paragraph({ children: [new TextRun({ text: `Contexto: ${c.context}`, bold: true })], spacing: { before: 200 } }));
+         children.push(new Paragraph({ children: [new TextRun({ text: `"${c.selectedText}"`, italics: true })] }));
          children.push(new Paragraph({ text: `Comentario: ${c.commentText}` }));
       });
     }
@@ -105,9 +105,9 @@ export function InformeModal({ original, current, onClose }: InformeModalProps) 
       children.push(new Paragraph({ text: "Ediciones al Texto", heading: HeadingLevel.HEADING_2, spacing: { before: 400, after: 200 } }));
       changes.forEach(change => {
          const title = change.type === 'credito' ? `CRÉDITOS: ${change.identifier}` : `Entrada #${change.index} (${change.type === 'speaker' ? 'LOCUTOR' : change.type === 'sound' ? 'SONIDO' : 'TEXTO'}) ${change.identifier ? `- ORDEN: ${change.identifier}` : ''}`;
-         children.push(new Paragraph({ text: title, bold: true, spacing: { before: 200 } }));
+         children.push(new Paragraph({ children: [new TextRun({ text: title, bold: true })], spacing: { before: 200 } }));
          children.push(new Paragraph({ text: "Original:" }));
-         children.push(new Paragraph({ text: stripHtml(change.before), italics: true }));
+         children.push(new Paragraph({ children: [new TextRun({ text: stripHtml(change.before), italics: true })] }));
          children.push(new Paragraph({ text: "Editado:" }));
          children.push(new Paragraph({ text: stripHtml(change.after) }));
       });
