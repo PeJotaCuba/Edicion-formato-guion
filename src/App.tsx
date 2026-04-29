@@ -196,17 +196,26 @@ export default function App() {
     if (!script) return 'GUION_FORMATEADO.DOCX';
     
     // Strip HTML from values in case they were edited using content editable
-    const stripHtml = (html: string) => html.replace(/<[^>]+>/g, '').trim();
+    const stripHtml = (html: string) => html.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim();
 
-    const programa = stripHtml(script.credits.find(c => c.label === 'PROGRAMA' || c.label.includes('PROGRAMA'))?.value || '');
-    const fechaRaw = stripHtml(script.credits.find(c => c.label === 'FECHA' || c.label.includes('FECHA'))?.value || '');
+    const progCredit = script.credits.find(c => c.label.toUpperCase().includes('PROGRAMA'));
+    const programa = stripHtml(progCredit?.value || '');
+    
+    // Find a FECHA credit that actually has a value
+    const fechaMatches = script.credits.filter(c => c.label.toUpperCase().includes('FECHA'));
+    const fechaCredit = fechaMatches.find(c => {
+        const val = stripHtml(c.value);
+        return val && !val.includes('____');
+    }) || fechaMatches[0];
+    
+    const fechaRaw = stripHtml(fechaCredit?.value || '');
     
     let fileName = 'GUION';
-    if (programa && programa !== '_________________________') {
+    if (programa && !programa.includes('____')) {
       fileName = programa.toUpperCase();
     }
 
-    if (fechaRaw && fechaRaw !== '_________________________') {
+    if (fechaRaw && !fechaRaw.includes('____')) {
         const months = ['ENE', 'FEB', 'MAR', 'ABR', 'MAY', 'JUN', 'JUL', 'AGO', 'SEP', 'OCT', 'NOV', 'DIC'];
         const fullMonths = ['ENERO', 'FEBRERO', 'MARZO', 'ABRIL', 'MAYO', 'JUNIO', 'JULIO', 'AGOSTO', 'SEPTIEMBRE', 'OCTUBRE', 'NOVIEMBRE', 'DICIEMBRE'];
 
@@ -236,17 +245,18 @@ export default function App() {
         } else if (day && month) {
              fileName += ` ${day} ${month}`;
         } else {
-            // Fallback: limpiar un poco el string original (quitar "DE", "DEL")
+            // Fallback: limpiar un poco el string original (quitar "DE", "DEL", "/", "-")
             const cleaned = fechaRaw.toUpperCase()
                 .replace(/\bDE\b/g, '')
                 .replace(/\bDEL\b/g, '')
+                .replace(/[\\/-]/g, ' ')
                 .replace(/\s+/g, ' ')
                 .trim();
             fileName += ` ${cleaned}`;
         }
     }
     
-    return `${fileName.trim()}.DOCX`;
+    return `${fileName.replace(/\s+/g, ' ').trim()}.DOCX`;
   };
 
   const handleDownload = async () => {
@@ -586,31 +596,23 @@ export default function App() {
           )}
 
           <div 
-            className="flex-1 py-12 px-8 overflow-y-auto shadow-inner flex flex-col items-center bg-slate-200 relative pb-32"
+            className="flex-1 py-12 px-8 overflow-y-auto flex flex-col items-center bg-white relative pb-32"
             onMouseUp={handleSelection}
             onKeyUp={handleSelection}
           >
             {/* The "Paper" - Carta (Letter) Size: 21.59cm x 27.94cm */}
             <div 
-              className="w-full max-w-[21.59cm] min-h-[27.94cm] h-max bg-white shadow-2xl relative mb-12 pb-16" 
+              className="w-full max-w-[21.59cm] min-h-[27.94cm] h-auto flex flex-col bg-white relative mb-12 pb-16" 
             >
-              {scriptData && (
-                <>
-                  {/* Top Ruler */}
-                  <div className="absolute top-0 left-0 right-0 h-3 border-b border-slate-300 pointer-events-none opacity-50" style={{ backgroundImage: 'repeating-linear-gradient(90deg, transparent, transparent 0.5cm, #cbd5e1 0.5cm, #cbd5e1 0.52cm)' }} />
-                  {/* Left Ruler */}
-                  <div className="absolute top-0 left-0 bottom-0 w-3 border-r border-slate-300 pointer-events-none opacity-50" style={{ backgroundImage: 'repeating-linear-gradient(180deg, transparent, transparent 0.5cm, #cbd5e1 0.5cm, #cbd5e1 0.52cm)' }} />
-                </>
-              )}
               {scriptData ? (
                 <div 
                     className="p-8 sm:p-[1.27cm]"
-                    style={{ 
-                        fontFamily: 'Arial, sans-serif',
-                        fontSize: `${fontSize}pt`,
-                        lineHeight: lineSpacing
-                    }}
-                >
+                      style={{ 
+                          fontFamily: 'Arial, sans-serif',
+                          fontSize: `${fontSize}pt`,
+                          lineHeight: lineSpacing
+                      }}
+                  >
                   {/* Page number on preview */}
                   <div className="absolute top-[1.27cm] right-[1.27cm] font-bold font-arial text-[12pt]">1</div>
 
