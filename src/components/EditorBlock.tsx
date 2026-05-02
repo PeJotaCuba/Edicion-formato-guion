@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, memo } from 'react';
 
 interface EditorBlockProps {
   html: string;
@@ -7,30 +7,41 @@ interface EditorBlockProps {
   style?: React.CSSProperties;
 }
 
-export function EditorBlock({ html, onChange, className, style }: EditorBlockProps) {
+export const EditorBlock = memo(function EditorBlock({ html, onChange, className, style }: EditorBlockProps) {
   const contentEditableRef = useRef<HTMLDivElement>(null);
-  const [isFocused, setIsFocused] = useState(false);
+  const lastHtmlRef = useRef(html);
+  const initialHtmlRef = useRef(html);
 
   useEffect(() => {
-    if (contentEditableRef.current && !isFocused && contentEditableRef.current.innerHTML !== html) {
-      contentEditableRef.current.innerHTML = html;
+    if (contentEditableRef.current && lastHtmlRef.current !== html) {
+      if (document.activeElement !== contentEditableRef.current) {
+         contentEditableRef.current.innerHTML = html;
+         lastHtmlRef.current = html;
+      }
     }
-  }, [html, isFocused]);
+  }, [html]);
 
   const handleInput = (e: React.FormEvent<HTMLDivElement>) => {
-    onChange(e.currentTarget.innerHTML);
+    const newHtml = e.currentTarget.innerHTML;
+    if (lastHtmlRef.current !== newHtml) {
+        lastHtmlRef.current = newHtml;
+        onChange(newHtml);
+    }
   };
 
   return (
-    <div
+    <span
       ref={contentEditableRef}
-      contentEditable
+      contentEditable={true}
       suppressContentEditableWarning
       onInput={handleInput}
-      onFocus={() => setIsFocused(true)}
-      onBlur={() => setIsFocused(false)}
-      className={`focus:outline-none focus:ring-1 focus:ring-indigo-300 rounded-sm transition-all ${className}`}
+      className={`focus:outline-none transition-all ${className}`}
       style={{ ...style, cursor: 'text' }}
+      dangerouslySetInnerHTML={{ __html: initialHtmlRef.current }}
     />
   );
-}
+}, (prev, next) => {
+    // Only re-render if html actually changes to something we haven't seen.
+    // Also ignores in-line functions like onChange by not checking them.
+    return prev.html === next.html && prev.className === next.className;
+});

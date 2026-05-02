@@ -14,10 +14,26 @@ export default function App() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [scriptData, setScriptData] = useState<RadioScript | null>(null);
   const [originalScriptData, setOriginalScriptData] = useState<RadioScript | null>(null);
-  const [savedScriptData, setSavedScriptData] = useState<RadioScript | null>(null);
+  const [history, setHistory] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [showInforme, setShowInforme] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
+
+  // Debounced history capture
+  useEffect(() => {
+    if (scriptData) {
+      const timer = setTimeout(() => {
+        setHistory(prev => {
+          const currentStr = JSON.stringify(scriptData);
+          if (prev.length === 0 || prev[prev.length - 1] !== currentStr) {
+            return [...prev, currentStr].slice(-50); // limit to 50
+          }
+          return prev;
+        });
+      }, 500); // 500ms debounce
+      return () => clearTimeout(timer);
+    }
+  }, [scriptData]);
   const [commentModal, setCommentModal] = useState<{ active: boolean, range: Range | null }>({ active: false, range: null });
   const previewRef = useRef<HTMLElement>(null);
   
@@ -30,6 +46,7 @@ export default function App() {
   const [paragraphSpacing, setParagraphSpacing] = useState<number>(6);
 
   const [selectionStats, setSelectionStats] = useState<{ paragraphs: number, lines: number, words: number, repetitions: number } | null>(null);
+  const [replaceModal, setReplaceModal] = useState<{ active: boolean, text: string, replaceWidth: string, isPattern: boolean }>({ active: false, text: "", replaceWidth: "", isPattern: false });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [activeTooltip, setActiveTooltip] = useState<{ x: number, y: number, text: string } | null>(null);
 
@@ -75,35 +92,28 @@ export default function App() {
   }, [scriptData, activeTab]);
 
   const handleSave = () => {
-    if (scriptData) {
-      setSavedScriptData(JSON.parse(JSON.stringify(scriptData)));
-      setIsDirty(false);
-    }
+    setIsDirty(false);
   };
 
   const handleRevert = () => {
-    if (savedScriptData) {
-      const confirmRevert = window.confirm("¿Está seguro de que desea revertir todos los cambios no guardados?");
-      if (confirmRevert) {
-        setScriptData(JSON.parse(JSON.stringify(savedScriptData)));
-        setIsDirty(false);
+    setHistory(prev => {
+      if (prev.length > 1) {
+        const newHistory = [...prev];
+        newHistory.pop(); // remove current state
+        const previousStateStr = newHistory[newHistory.length - 1];
+        setScriptData(JSON.parse(previousStateStr));
+        setIsDirty(true);
+        return newHistory;
       }
-    }
+      return prev;
+    });
   };
 
   const requireSaveBeforeAction = (action: () => void) => {
     if (isDirty) {
-      const confirmSave = window.confirm("Hay cambios sin guardar. ¿Desea guardarlos y continuar? Si cancela, los últimos cambios no se incluirán.");
-      if (confirmSave) {
-        handleSave();
-        // Since handleSave updates state immediately in memory for scriptData, we can just proceed.
-        // Wait, action may rely on originalScriptData (like informe). State updates are async.
-        // But generate docx uses scriptData. Let's just proceed.
-        setTimeout(action, 0); 
-      }
-    } else {
-      action();
+      handleSave();
     }
+    setTimeout(action, 0); 
   };
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -113,15 +123,18 @@ export default function App() {
     setIsProcessing(true);
     setError(null);
 
+    // Clean markdown asterisks
+    const cleanedText = textToProcess.replace(/\*\*/g, '');
+
     try {
       // Intentar el parsing local
-      const localParsedData = parseScriptLocally(textToProcess);
+      const localParsedData = parseScriptLocally(cleanedText);
       
       if (localParsedData) {
           const normalized = normalizeScriptNumbering(localParsedData);
           setScriptData(normalized);
           setOriginalScriptData(JSON.parse(JSON.stringify(normalized)));
-          setSavedScriptData(JSON.parse(JSON.stringify(normalized)));
+          setHistory([JSON.stringify(normalized)]);
           // Auto-scroll on generated
           if (window.innerWidth < 768) {
              setActiveTab('preview');
@@ -129,6 +142,7 @@ export default function App() {
           setTimeout(() => {
              if (scrollContainerRef.current) {
                 scrollContainerRef.current.scrollTop = 0;
+                scrollContainerRef.current.focus();
              }
           }, 300);
       } else {
@@ -147,15 +161,10 @@ export default function App() {
   };
 
   const handleClear = () => {
-    if (inputText.trim() || scriptData) {
-      if (!window.confirm("¿Seguro que desea LIMPIAR todo? Se perderá el texto actual y el guion generado.")) {
-          return;
-      }
-    }
     setInputText('');
     setScriptData(null);
     setOriginalScriptData(null);
-    setSavedScriptData(null);
+    setHistory([]);
     setIsDirty(false);
     setError(null);
     if (fileInputRef.current) {
@@ -168,36 +177,63 @@ export default function App() {
     if (!file) return;
 
     setError(null);
+    setIsProcessing(true);
 
-    // Proceso normal para .docx
     try {
-        const arrayBuffer = await file.arrayBuffer();
-        const result = await mammoth.convertToHtml({ arrayBuffer });
-        
-        const text = result.value
-            .replace(/<\/(p|h[1-6]|div|li|tr)>/gi, '\n')
-            .replace(/<br\s*[\/]?>/gi, '\n')
-            .replace(/<[^>]+>/g, ' ')
-            .replace(/&nbsp;/g, ' ')
-            .replace(/&amp;/g, '&')
-            .replace(/&lt;/g, '<')
-            .replace(/&gt;/g, '>')
-            .replace(/ {2,}/g, ' ')
-            .replace(/\n\s*\n/g, '\n')
-            .trim();
-            
-        if (text.length < 20) {
-            throw new Error("El archivo no convirtiera texto legible.");
+        let extractedText = '';
+
+        if (file.name.toLowerCase().endsWith('.doc')) {
+             // Fallback rudimentario para .doc: leer como binario y extraer ASCII/Latin1
+             const arrayBuffer = await file.arrayBuffer();
+             const decoder = new TextDecoder('windows-1252');
+             const rawText = decoder.decode(arrayBuffer);
+             // Eliminar caracteres de control binarios
+             extractedText = rawText.replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F]/g, '')
+                                    .replace(/\s{2,}/g, ' ')
+                                    .trim();
+        } else {
+             // Proceso normal para .docx
+             const arrayBuffer = await file.arrayBuffer();
+             const result = await mammoth.convertToHtml({ arrayBuffer });
+             
+             let html = result.value;
+             
+             // Simplify HTML before parsing but keep core formatting
+             html = html.replace(/<p[^>]*>/gi, '').replace(/<\/p>/gi, '\n');
+             html = html.replace(/<div[^>]*>/gi, '').replace(/<\/div>/gi, '\n');
+             html = html.replace(/<tr[^>]*>/gi, '').replace(/<\/tr>/gi, '\n');
+             html = html.replace(/<br\s*[\/]?>/gi, '\n');
+             
+             extractedText = html
+                 .replace(/&nbsp;/g, ' ')
+                 .replace(/&amp;/g, '&')
+                 .replace(/&lt;/g, '<')
+                 .replace(/&gt;/g, '>')
+                 // Replace any tag that isn't one of these core formatting tags
+                 .replace(/<(?!(\/)?(b|strong|i|em|u|span)\b)[^>]+>/gi, '') 
+                 .replace(/ +/g, ' ')
+                 .trim();
+        }
+
+        // Clean markdown asterisks
+        extractedText = extractedText.replace(/\*\*/g, '');
+
+        if (extractedText.length < 20) {
+            throw new Error("El archivo no contenía texto legible.");
         }
             
-        setInputText(text);
+        setInputText(extractedText);
+        // Automáticamente procesarlo y generar el guion si viene de archivo
+        await processScriptText(extractedText);
         
         if (fileInputRef.current) {
             fileInputRef.current.value = '';
         }
     } catch (err) {
-        console.error("Error reading docx:", err);
-        setError("Error al leer el archivo. Asegúrese de que sea un archivo .docx válido.");
+        console.error("Error reading docx/doc:", err);
+        setError("Error al leer el archivo. Inténtelo de nuevo o use un .docx.");
+    } finally {
+        setIsProcessing(false);
     }
   };
 
@@ -319,6 +355,80 @@ export default function App() {
     }
 
     setSelectionStats({ paragraphs, lines, words, repetitions });
+  };
+
+  const executeFormat = (cmd: string, val?: string) => {
+      document.execCommand(cmd, false, val);
+      setIsDirty(true);
+  };
+
+  const executeCase = (toUpper: boolean) => {
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return;
+      const text = selection.toString();
+      document.execCommand('insertText', false, toUpper ? text.toUpperCase() : text.toLowerCase());
+      setIsDirty(true);
+  };
+
+  const handleOpenReplace = () => {
+       const selection = window.getSelection();
+       const selectedText = selection?.toString().trim() || "";
+       let isPattern = false;
+       if (/^\[.*?\]$/.test(selectedText) || /^\(.*?(\d+)?.*?\)$/.test(selectedText)) {
+           isPattern = true;
+       }
+       setReplaceModal({ active: true, text: selectedText, replaceWidth: "", isPattern });
+  };
+
+  const handleReplaceAll = (forceReplacement?: string) => {
+       if (!replaceModal.text || !scriptData) return;
+       const { text, isPattern } = replaceModal;
+       const rep = forceReplacement !== undefined ? forceReplacement : replaceModal.replaceWidth;
+
+       setScriptData(prev => {
+          if (!prev) return prev;
+          const fresh = JSON.parse(JSON.stringify(prev));
+          let regex: RegExp;
+          if (isPattern) {
+             if (text.startsWith('(')) {
+                 const prefixMatch = text.match(/^\((.*?)\d+/);
+                 if (prefixMatch && prefixMatch[1]) {
+                     const safePrefix = prefixMatch[1].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                     regex = new RegExp(`\\(${safePrefix}\\d+[^)]*\\)`, 'g');
+                 } else {
+                     regex = /\([^)]*\)/g;
+                 }
+             } else {
+                 const match = text.match(/^\[(.*?)(\s+\d+)?\]$/);
+                 if (match) {
+                     const baseWord = match[1].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                     regex = new RegExp(`\\[\\s*${baseWord}\\s*(\\d+)?\\s*\\]`, 'gi');
+                 } else {
+                     regex = new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
+                 }
+             }
+          } else {
+             regex = new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+          }
+
+          fresh.body.forEach((item: any) => {
+              if (item.text) {
+                  item.text = item.text.map((p: string) => p.replace(regex, rep));
+              }
+              if (item.speakerName) {
+                  item.speakerName = item.speakerName.replace(regex, rep);
+              }
+              if (item.intention) {
+                  item.intention = item.intention.replace(regex, rep);
+              }
+          });
+          fresh.credits.forEach((c: any) => {
+              c.value = c.value.replace(regex, rep);
+          });
+          return fresh;
+       });
+       setReplaceModal({ active: false, text: "", replaceWidth: "", isPattern: false });
+       setIsDirty(true);
   };
 
   const handleAddComment = () => {
@@ -509,16 +619,19 @@ export default function App() {
               </div>
             )}
             <div className="flex-1 flex flex-col min-h-[250px]">
-              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5 ml-1 flex justify-between items-center">
-                <span>Texto a Formatear</span>
+              <div className="flex justify-between items-center mb-1.5 ml-1">
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
+                  Texto a Formatear
+                </label>
                 <button 
+                  type="button"
                   onClick={handleClear}
-                  className="text-indigo-600 hover:text-indigo-800 flex items-center transition-colors"
+                  className="text-indigo-600 hover:text-indigo-800 flex items-center transition-colors text-[10px] font-bold uppercase tracking-wider"
                 >
                   <RotateCcw className="w-3 h-3 mr-1" />
                   REINICIAR
                 </button>
-              </label>
+              </div>
               <textarea 
                 className="flex-1 w-full bg-white border border-slate-300 rounded-xl p-4 text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none resize-none shadow-sm transition-shadow" 
                 placeholder="Pegue aquí el texto original o cargue un archivo .docx..."
@@ -605,15 +718,65 @@ export default function App() {
                 onAddComment={handleAddComment} 
                 onSave={handleSave} 
                 onRevert={handleRevert} 
+                onReplace={handleOpenReplace}
                 isDirty={isDirty} 
              />
           )}
 
           <div 
             ref={scrollContainerRef}
-            className="flex-1 overflow-y-auto w-full flex flex-col items-center bg-slate-100 relative py-12 pb-64"
+            tabIndex={0}
+            className="flex-1 overflow-y-auto w-full flex flex-col items-center bg-slate-100 relative py-12 pb-64 focus:outline-none"
+            style={{ userSelect: 'text' }}
             onMouseUp={handleSelection}
             onKeyUp={handleSelection}
+            onCopy={(e) => {
+               const selection = window.getSelection();
+               if (selection && !selection.isCollapsed) {
+                   e.preventDefault();
+                   e.clipboardData.setData('text/plain', selection.toString());
+                   e.clipboardData.setData('text/html', selection.toString().replace(/\n/g, '<br>'));
+               }
+            }}
+            onCut={(e) => {
+               const selection = window.getSelection();
+               if (selection && !selection.isCollapsed) {
+                   e.preventDefault();
+                   e.clipboardData.setData('text/plain', selection.toString());
+                   document.execCommand('delete');
+               }
+            }}
+            onPaste={(e) => {
+               // Only intercept if pasting into content editable
+               if (document.activeElement?.hasAttribute('contenteditable')) {
+                  e.preventDefault();
+                  const text = e.clipboardData.getData('text/plain');
+                  document.execCommand('insertText', false, text);
+               }
+            }}
+            onKeyDown={(e) => {
+              if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+                  e.preventDefault();
+                  handleRevert();
+                  return;
+              }
+
+              // Si el usuario está editando un bloque, permitimos las flechas para mover el cursor
+              if ((e.target as HTMLElement).isContentEditable || 
+                  (e.target as HTMLElement).tagName === 'INPUT' || 
+                  (e.target as HTMLElement).tagName === 'TEXTAREA' ||
+                  (e.target as HTMLElement).tagName === 'SELECT') {
+                return;
+              }
+
+              if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                scrollContainerRef.current?.scrollBy({ top: 60, behavior: 'smooth' });
+              } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                scrollContainerRef.current?.scrollBy({ top: -60, behavior: 'smooth' });
+              }
+            }}
           >
             {scriptData ? (
                 /* The "Paper" - Carta (Letter) Size: 21.59cm x 27.94cm. Using flex-col and h-auto to ensure background covers all text. */
@@ -757,6 +920,16 @@ export default function App() {
         />
       )}
 
+      {isProcessing && (
+         <div className="fixed inset-0 bg-slate-900/50 z-[100] flex items-center justify-center p-4 backdrop-blur-sm">
+            <div className="bg-white rounded-xl shadow-2xl p-8 flex flex-col items-center animate-in zoom-in-95 duration-200">
+               <Loader2 className="w-12 h-12 text-indigo-600 animate-spin mb-4" />
+               <h3 className="text-lg font-bold text-slate-800">Procesando Documento</h3>
+               <p className="text-sm text-slate-500 mt-2 text-center max-w-[250px]">Analizando estructura y aplicando el formato...</p>
+            </div>
+         </div>
+      )}
+
       {/* Editor Comment Modals & Tooltips */}
       {commentModal.active && (
          <div className="fixed inset-0 bg-slate-900/30 z-50 flex items-center justify-center p-4">
@@ -805,6 +978,52 @@ export default function App() {
           >
             {activeTooltip.text}
             <div className="absolute top-0 left-1/2 -mt-1 w-2 h-2 bg-slate-800 rotate-45 -translate-x-1/2"></div>
+          </div>
+      )}
+
+      {replaceModal.active && (
+          <div className="fixed inset-0 bg-slate-900/30 z-50 flex items-center justify-center p-4">
+             <div className="bg-white rounded-lg shadow-xl w-full max-w-sm p-4 animate-in fade-in zoom-in-95 duration-200">
+               <div className="flex justify-between items-center mb-4">
+                   <h3 className="text-sm font-bold text-slate-800">Buscar y Reemplazar</h3>
+                   <button onClick={() => setReplaceModal({ ...replaceModal, active: false })} className="text-slate-400 hover:text-slate-600">✕</button>
+               </div>
+               <div className="space-y-4">
+                   <div>
+                       <label className="block text-xs font-bold text-slate-500 mb-1">Buscar ({replaceModal.isPattern ? 'Patrón similar' : 'Texto exacto'}):</label>
+                       <input 
+                           type="text" 
+                           value={replaceModal.text}
+                           onChange={(e) => setReplaceModal({ ...replaceModal, text: e.target.value })}
+                           className="w-full text-sm p-2 border border-slate-300 rounded focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                       />
+                   </div>
+                   <div>
+                       <label className="block text-xs font-bold text-slate-500 mb-1">Reemplazar con:</label>
+                       <input 
+                           type="text" 
+                           value={replaceModal.replaceWidth}
+                           onChange={(e) => setReplaceModal({ ...replaceModal, replaceWidth: e.target.value })}
+                           placeholder="Dejar vacío para borrar..."
+                           className="w-full text-sm p-2 border border-slate-300 rounded focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                       />
+                   </div>
+                   <div className="flex space-x-2 pt-2">
+                        <button 
+                           onClick={() => { handleReplaceAll(""); }} 
+                           className="flex-1 px-3 py-2 text-xs bg-red-100 text-red-700 rounded font-bold hover:bg-red-200 cursor-pointer text-center uppercase"
+                        >
+                           {replaceModal.isPattern ? 'Borrar Similares' : 'Eliminar Texto'}
+                        </button>
+                        <button 
+                           onClick={() => handleReplaceAll()}
+                           className="flex-1 px-3 py-2 text-xs bg-indigo-600 text-white rounded font-bold hover:bg-indigo-700 cursor-pointer text-center uppercase"
+                        >
+                           Reemplazar
+                        </button>
+                   </div>
+               </div>
+             </div>
           </div>
       )}
     </div>

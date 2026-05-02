@@ -16,6 +16,28 @@ function numberToRoman(num: number): string {
     return str;
 }
 
+// Format dates specifically for years in the script
+function formatTextForVoice(text: string): string {
+    // Replace quotes and specific guillemets with empty strings
+    let res = text.replace(/["«»]/g, '');
+
+    // Format years from 19xx and 20xx
+    res = res.replace(/\b19(\d{2})\b/g, 'mil $1');
+    res = res.replace(/\b20(\d{2})\b/g, 'dos mil $1');
+    
+    // Replace standalone 1-9 representing days with words (very specific common occurrences)
+    // We only do this if it looks like "X de"
+    const singleDigitMap: {[key: string]: string} = {
+        '1': 'uno', '2': 'dos', '3': 'tres', '4': 'cuatro', 
+        '5': 'cinco', '6': 'seis', '7': 'siete', '8': 'ocho', '9': 'nueve'
+    };
+    res = res.replace(/\b([1-9])\s+de\s+(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\b/gi, (match, p1, p2) => {
+        return `${singleDigitMap[p1]} de ${p2}`;
+    });
+
+    return res;
+}
+
 export function normalizeScriptNumbering(script: RadioScript): RadioScript {
     let soundCounter = 1;
     let speakerCounter = 1;
@@ -63,10 +85,35 @@ export function normalizeScriptNumbering(script: RadioScript): RadioScript {
         });
     }
 
+    // Merge consecutive speakers BEFORE second pass
+    const mergedBody: ScriptItem[] = [];
+    script.body.forEach(item => {
+        // Format text nodes within item
+        const formattedItem = { ...item };
+        if (formattedItem.text && formattedItem.text.length > 0) {
+           formattedItem.text = formattedItem.text.map(t => formatTextForVoice(t));
+        }
+
+        if (mergedBody.length > 0) {
+            const lastItem = mergedBody[mergedBody.length - 1];
+            if (lastItem.type === 'speaker' && formattedItem.type === 'speaker') {
+                const lastCleanName = (lastItem.speakerName || '').toUpperCase().trim();
+                const currCleanName = (formattedItem.speakerName || '').toUpperCase().trim();
+                
+                if (lastCleanName === currCleanName && !isMetadata(lastCleanName)) {
+                    // Merge!
+                    lastItem.text = lastItem.text.concat(formattedItem.text);
+                    return; // Skip adding the current item as a new block
+                }
+            }
+        }
+        mergedBody.push(formattedItem);
+    });
+
     // Second pass: Perform normalization
     const normalizedBody: ScriptItem[] = [];
     
-    script.body.forEach(item => {
+    mergedBody.forEach(item => {
         if (item.type === 'sound') {
             const romanId = numberToRoman(soundCounter);
             soundCounter++;

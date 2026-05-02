@@ -7,8 +7,9 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
     // First pass: Identify dynamic speaker names that are numbered explicitly or known
     const knownSpeakers = new Set<string>(['LOC', 'LOCUTOR', 'LOCUTORA', 'PERIODISTA', 'ANIMADOR', 'ANIMADORA']);
     for (const p of paragraphs) {
+        const flatP = p.replace(/<[^>]+>/g, '');
         // En primer lugar intentamos atrapar los que tienen formato con dos puntos
-        const docNameMatch = p.match(/^[\(]?(\d+)[\)]?[\s.-]*([^:.]+)[.:]+\s*(.*)$/i);
+        const docNameMatch = flatP.match(/^[\(]?(\d+)[\)]?[\s.-]*([^:.]+)[.:]+\s*(.*)$/i);
         if (docNameMatch) {
             const name = docNameMatch[2].trim().toUpperCase();
             if (name.length < 25) {
@@ -16,8 +17,7 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
             }
         } else {
              // En segundo lugar intentamos atrapar los que empiezan por numero e inmediatamente el nombre en mayuscula (ej. "02 LUIS")
-             // Aceptamos nombres compuestos de hasta 30 caracteres
-             const numMatch = p.match(/^[\(]?(\d+)[\)]?[\s.-]*([A-ZÁÉÍÓÚÑa-záéíóúñ\s]{2,30})\b/i);
+             const numMatch = flatP.match(/^[\(]?(\d+)[\)]?[\s.-]*([A-ZÁÉÍÓÚÑa-záéíóúñ\s]{2,30})\b/i);
              if (numMatch) {
                  const potentialName = numMatch[2].trim().toUpperCase();
                  if (potentialName && !/^(SON|SONIDO|OP|EFECTO|MÚSICA|CREDITOS|PÁGINA)$/i.test(potentialName)) {
@@ -27,26 +27,48 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
         }
     }
 
+    // Main parsing loop variables
     const credits: {label: string, value: string}[] = [];
     const body: any[] = [];
     
     let parsingCredits = true;
     let foundValidContent = false;
     
+    // Helper to find the index in the original string that corresponds to a flat index
+    const getOriginalIndex = (original: string, flatIndex: number): number => {
+        let flatCount = 0;
+        let originalIdx = 0;
+        while (originalIdx < original.length && flatCount < flatIndex) {
+            if (original[originalIdx] === '<') {
+                while (originalIdx < original.length && original[originalIdx] !== '>') originalIdx++;
+                originalIdx++;
+            } else {
+                flatCount++;
+                originalIdx++;
+            }
+        }
+        return originalIdx;
+    };
+    
     for (const p of paragraphs) {
         // Omitir números de página sueltos
-        if (/^(?:P\u00e1gina|Page\s*)?\d+$/i.test(p)) {
+        const flatP = p.replace(/<[^>]+>/g, '');
+        if (/^(?:P\u00e1gina|Page\s*)?\d+$/i.test(flatP)) {
             continue;
         }
 
         // Matcher para sonido: OJO, no exigimos dos puntos aquí para hacerlo robusto
-        const soundMatch = p.match(/^[\(]?([IVXLCDM]*|[\d]*)[\)]?[\s.:]*(SON|SONIDO|OP|EFECTO|MÚSICA)\b[^\w]*(.*)$/i);
+        const soundMatch = flatP.match(/^[\(]?([IVXLCDM]*|[\d]*)[\)]?[\s.:]*(SON|SONIDO|OP|EFECTO|MÚSICA)\b[^\w]*(.*)$/i);
         if (soundMatch) {
             parsingCredits = false;
             foundValidContent = true;
             let id = soundMatch[1] || "";
-            let remainingText = soundMatch[3].trim();
-            // A veces accidentalmente capturan el "SON" en el result [3] si hubo espacio antes
+            
+            // Get original remaining text with tags
+            const headerLength = flatP.length - (soundMatch[3] ? soundMatch[3].length : 0);
+            const originalOffset = getOriginalIndex(p, headerLength);
+            let remainingText = p.substring(originalOffset).trim();
+            
             body.push({
                 type: 'sound',
                 identifier: id.toUpperCase(),
@@ -64,62 +86,65 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
         let textExtracted = "";
 
         // Attempt format 1: explicitly has colon/dot acting as separator for a short name
-        const colonMatch = p.match(/^[\(]?(\d*)[\)]?[\s.-]*([A-ZÁÉÍÓÚÑa-záéíóúñ0-9\s]{1,30})[.:]+\s*(?:\(([^)]+)\))?\s*(.*)$/i);
+        const colonMatch = flatP.match(/^[\(]?(\d*)[\)]?[\s.-]*([A-ZÁÉÍÓÚÑa-záéíóúñ0-9\s]{1,30})[.:]+\s*(?:\(([^)]+)\))?\s*(.*)$/i);
         if (colonMatch) {
             id = colonMatch[1];
-            let originalName = colonMatch[2].trim();
-            name = originalName.toUpperCase();
+            let originalNamePart = colonMatch[2].trim();
+            name = originalNamePart.toUpperCase();
             intention = colonMatch[3] ? colonMatch[3].trim().toUpperCase() : "";
-            textExtracted = colonMatch[4].trim();
             isSpeaker = true;
-            speakerOriginalName = originalName;
+            speakerOriginalName = originalNamePart;
+            
+            const headerLength = flatP.length - (colonMatch[4] ? colonMatch[4].length : 0);
+            const originalOffset = getOriginalIndex(p, headerLength);
+            textExtracted = p.substring(originalOffset).trim();
         } else {
             // Attempt format 2: No colon, but explicit number + known speaker
-            const noColonMatch = p.match(/^[\(]?(\d+)[\)]?[\s.-]*([A-ZÁÉÍÓÚÑa-záéíóúñ\s]{2,30})\b\s*(?:\(([^)]+)\))?\s*(.*)$/i);
+            const noColonMatch = flatP.match(/^[\(]?(\d+)[\)]?[\s.-]*([A-ZÁÉÍÓÚÑa-záéíóúñ\s]{2,30})\b\s*(?:\(([^)]+)\))?\s*(.*)$/i);
             if (noColonMatch) {
-                let originalName = noColonMatch[2].trim();
-                let tempName = originalName.toUpperCase();
+                let originalNamePart = noColonMatch[2].trim();
+                let tempName = originalNamePart.toUpperCase();
                 // Only consider it a speaker without a colon if it's a known speaker
                 if (knownSpeakers.has(tempName)) {
                     id = noColonMatch[1];
                     name = tempName;
                     intention = noColonMatch[3] ? noColonMatch[3].trim().toUpperCase() : "";
-                    textExtracted = noColonMatch[4].trim();
                     isSpeaker = true;
-                    speakerOriginalName = originalName;
+                    speakerOriginalName = originalNamePart;
+                    
+                    const headerLength = flatP.length - (noColonMatch[4] ? noColonMatch[4].length : 0);
+                    const originalOffset = getOriginalIndex(p, headerLength);
+                    textExtracted = p.substring(originalOffset).trim();
                 }
             } else {
                 // Attempt format 3: No number, no colon, but STARTS EXACTLY with a known speaker
-                // We order them by length so 'LOCUTOR' matches before 'LOC'
                 const knownArray = Array.from(knownSpeakers).sort((a,b)=>b.length-a.length).join('|');
                 if (knownArray.length > 0) {
-                    const knownMatch = p.match(new RegExp(`^(${knownArray})\\b\\s*(?:\\(([^)]+)\\))?\\s*(.*)$`, 'i'));
+                    const knownMatch = flatP.match(new RegExp(`^(${knownArray})\\b\\s*(?:\\(([^)]+)\\))?\\s*(.*)$`, 'i'));
                     if (knownMatch) {
                         id = "";
-                        let originalName = knownMatch[1].trim();
-                        name = originalName.toUpperCase();
+                        let originalNamePart = knownMatch[1].trim();
+                        name = originalNamePart.toUpperCase();
                         intention = knownMatch[2] ? knownMatch[2].trim().toUpperCase() : "";
-                        textExtracted = knownMatch[3].trim();
                         isSpeaker = true;
-                        speakerOriginalName = originalName;
+                        speakerOriginalName = originalNamePart;
+                        
+                        const headerLength = flatP.length - (knownMatch[3] ? knownMatch[3].length : 0);
+                        const originalOffset = getOriginalIndex(p, headerLength);
+                        textExtracted = p.substring(originalOffset).trim();
                     }
                 }
             }
         }
         
         if (isSpeaker) {
-            const isCreditLabel = name.match(/^(EMISORA|PROGRAMA|EMISI[OÓ]N|FECHA|FECHA DE TRANSMISI[OÓ]N|FECHA DE GRABACI[OÓ]N|ESCRIBE|ESCRITOR|GUI[OÓ]N|GUION|ASESOR|ASESORA|DIRIGE|DIRECTOR|DIRECCI[OÓ]N|DIRECCI[OÓ]N GENERAL|REDACCI[OÓ]N|TEMA|REALIZADOR|REALIZADOR DE SONIDO|REALIZADOR DE SONIDOS|LOCUTOR|LOCUTORA)$/);
+            const isCreditLabel = name.match(/^(EMISORA|PROGRAMA|EMISI[OÓ]N|FECHA|FECHA DE TRANSMISI[OÓ]N|FECHA DE GRABACI[OÓ]N|ESCRIBE|ESCRITOR|GUI[OÓ]N|GUION|ASESOR|ASESORA|DIRIGE|DIRECTOR|DIRECCI[OÓ]N|DIRECCI[OÓ]N GENERAL|REDACCI[OÓ]N|TEMA|REALIZADOR|REALIZADOR DE SONIDO|REALIZADOR DE SONIDOS|LOCUTOR|LOCUTORA|LOC)$/);
             
             if (isCreditLabel && (!id || id.trim() === '')) {
-                // Nunca tratar etiquetas de crédito como locutores si no tienen número explícito, 
-                // incluso fuera del bloque de créditos, para evitar falsos positivos
                 isSpeaker = false; 
             } else if (parsingCredits && !id && name.length > 25) {
-                // Probablemente texto suelto o un párrafo que por azar tiene ":"
                 isSpeaker = false;
             } else if (parsingCredits && !id && !knownSpeakers.has(name) && !isCreditLabel) {
-                // Si estamos en créditos y no es un locutor conocido ni una etiqueta de crédito
-                // lo tratamos como posible crédito genérico abajo
                 isSpeaker = false;
             }
 
@@ -147,23 +172,39 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
 
         // Matcher para créditos
         if (parsingCredits) {
-            const creditMatch = p.match(/^([a-zA-ZÁÉÍÓÚáéíóúñÑ\s\(\)]+):\s*(.*)$/i);
-            const kwMatch = p.match(/^(EMISORA|PROGRAMA|EMISI[OÓ]N|FECHA(?: DE TRANSMISI[OÓ]N| DE GRABACI[OÓ]N)?|ESCRIBE|ESCRITOR|GUI[OÓ]N|GUION|ASESOR|ASESORA|DIRIGE|DIRECTOR|TEMA|REALIZADOR(?: DE SONIDO| DE SONIDOS)?|LOCUTOR|LOCUTORA)\b\s*(:?\s*.*)$/i);
+            const creditMatch = flatP.match(/^([a-zA-ZÁÉÍÓÚáéíóúñÑ\s\(\)]+):\s*(.*)$/i);
+            const kwMatch = flatP.match(/^(EMISORA|PROGRAMA|EMISI[OÓ]N|FECHA(?: DE TRANSMISI[OÓ]N| DE GRABACI[OÓ]N)?|ESCRIBE|ESCRITOR|GUI[OÓ]N|GUION|ASESOR|ASESORA|DIRIGE|DIRECTOR|TEMA|REALIZADOR(?: DE SONIDO| DE SONIDOS)?|LOC(?:UTOR|UTORA)?)\b[\s:.-]*(.*)$/i);
 
-            if (creditMatch && creditMatch[1].length < 40) {
-                credits.push({
-                    label: creditMatch[1].trim().toUpperCase(),
-                    value: creditMatch[2].trim()
-                });
-                continue;
-            } else if (kwMatch) {
-                // Limpiar el valor si empieza por ":" accidentalmente (atrapado por kwMatch)
-                let val = kwMatch[2].trim();
-                if (val.startsWith(':')) val = val.substring(1).trim();
+            if (kwMatch) {
+                // Get original value with tags
+                const labelInFlat = kwMatch[1];
+                const headerLength = flatP.indexOf(kwMatch[2], labelInFlat.length);
+                const originalOffset = getOriginalIndex(p, headerLength);
+                let val = p.substring(originalOffset).trim();
+                
+                // Limpiar el valor si empieza por ":" o "." accidentalmente
+                // We do this on the text version to be safe
+                let textVal = val.replace(/<[^>]+>/g, '').trim();
+                while (textVal.startsWith(':') || textVal.startsWith('.')) {
+                    // Try to find the first colon/dot in original to strip it safely
+                    const firstCharIdx = val.search(/[:.]/);
+                    if (firstCharIdx !== -1 && firstCharIdx < 5) {
+                        val = val.substring(firstCharIdx + 1).trim();
+                    }
+                    textVal = val.replace(/<[^>]+>/g, '').trim();
+                }
 
                 credits.push({
                     label: kwMatch[1].trim().toUpperCase(),
                     value: val
+                });
+                continue;
+            } else if (creditMatch && creditMatch[1].length < 40) {
+                const headerLength = flatP.indexOf(':') + 1;
+                const originalOffset = getOriginalIndex(p, headerLength);
+                credits.push({
+                    label: creditMatch[1].trim().toUpperCase(),
+                    value: p.substring(originalOffset).trim()
                 });
                 continue;
             }
@@ -171,10 +212,10 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
         
         // Párrafo de continuación (si pertenece a la intervención anterior)
         if (!parsingCredits) {
-            const isCreditLabel = p.match(/^(EMISORA|PROGRAMA|EMISI[OÓ]N|FECHA(?: DE TRANSMISI[OÓ]N| DE GRABACI[OÓ]N)?|ESCRIBE|ESCRITOR|GUI[OÓ]N|GUION|ASESOR|ASESORA|DIRIGE|DIRECTOR|TEMA|REALIZADOR|REALIZADOR DE SONIDO|REALIZADOR DE SONIDOS|LOCUTOR|LOCUTORA)\b\s*:/i);
+            // Check if it's a misplaced credit label
+            const isCreditLabel = flatP.match(/^(EMISORA|PROGRAMA|EMISI[OÓ]N|FECHA(?: DE TRANSMISI[OÓ]N| DE GRABACI[OÓ]N)?|ESCRIBE|ESCRITOR|GUI[OÓ]N|GUION|ASESOR|ASESORA|DIRIGE|DIRECTOR|TEMA|REALIZADOR(?: DE SONIDO| DE SONIDOS)?|LOC(?:UTOR|UTORA)?)\b[\s:.-]/i);
             
             if (isCreditLabel) {
-                // Si encontramos una etiqueta de crédito en medio del cuerpo, la ignoramos para evitar duplicados
                 continue;
             }
 
@@ -187,6 +228,21 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
                    speakerName: 'LOCUTOR',
                    text: [p]
                });
+            }
+        } else {
+            // En zona de créditos, pero la línea no coincidió con ninguna etiqueta.
+            // Si ya tenemos créditos, se asume que es una continuación del valor anterior.
+            if (credits.length > 0) {
+                credits[credits.length - 1].value += ' ' + p;
+            } else if (p.trim().length > 0) {
+                // Si hay texto ANTES del primer crédito, podríamos forzar su entrada al body y desactivar parsingCredits
+                parsingCredits = false;
+                body.push({
+                    type: 'speaker',
+                    identifier: '',
+                    speakerName: 'LOCUTOR',
+                    text: [p]
+                });
             }
         }
     }
@@ -208,21 +264,78 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
         'DIRECCIÓN GENERAL',
         'REDACCIÓN',
         'REALIZADOR (A) DE SONIDO', // Formato con (A)
+        'LOCUTOR',
+        'LOCUTORA',
         'FECHA DE TRANSMISIÓN',
         'FECHA DE GRABACIÓN', // Nuevo campo solicitado
         'FECHA',
         'TEMA'
     ];
 
+    // Helper to detect gender from a name
+    const detectGender = (name: string): 'M' | 'F' | 'U' => {
+        const n = name.trim().toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        if (!n) return 'U';
+        
+        // Use first word (first name) for cleaner detection
+        const firstName = n.split(/\s+/)[0];
+        
+        // common masculine names and endings
+        if (/^(LUIS|JOSE|JUAN|RAFAEL|PEDRO|CARLOS|MANUEL|ROBERTO|ALBERTO|DANIEL|JAVIER|VICENTE|RUBEN|ABEL|MIGUEL|EDUARDO|OSCAR|ANGEL|YUNIER|YANDY|YASSEL)$/.test(firstName)) return 'M';
+        if (firstName.endsWith('O') || firstName.endsWith('S') && !firstName.endsWith('AS')) {
+            if (/^(MARIA|INES|ANAYS|LOURDES|CARIDAD)$/.test(firstName)) return 'F';
+            return 'M';
+        }
+        
+        // common feminine names and endings
+        if (/^(MARIA|ANA|LAURA|CARIDAD|LISSELL|CARID|CARMEN|ROSA|ELENA|LUCIA|MARTA|SILVIA|BEATRIZ|INES)$/.test(firstName)) return 'F';
+        if (firstName.endsWith('A') || firstName.endsWith('AS')) {
+            if (/^(BATTISTA|GARCIA)$/.test(firstName)) return 'U'; // Just in case
+            return 'F';
+        }
+        
+        return 'U';
+    };
+
     // Helper to find and normalize labels
     const findAndNormalize = (label: string, value: string) => {
         let cleanLabel = label.toUpperCase().trim();
         let cleanValue = value.trim();
 
+        if (cleanLabel === 'LOC') {
+            cleanLabel = 'LOCUTOR';
+        }
+
+        // Gender adjustment for specific labels
+        if (['LOCUTOR', 'LOCUTORA', 'ASESOR', 'ASESORA', 'DIRECTOR', 'DIRECTORA', 'ESCRITOR', 'ESCRITORA'].includes(cleanLabel)) {
+            const gender = detectGender(cleanValue);
+            if (gender === 'M') {
+                if (cleanLabel.endsWith('ORA')) cleanLabel = cleanLabel.substring(0, cleanLabel.length - 1); // LOCUTORA -> LOCUTOR
+                else if (cleanLabel.endsWith('A')) cleanLabel = cleanLabel.substring(0, cleanLabel.length - 1); // ESCRITORA -> ESCRITOR
+            } else if (gender === 'F') {
+                if (cleanLabel.endsWith('OR') && !cleanLabel.endsWith('ORA')) cleanLabel = cleanLabel + 'A'; // LOCUTOR -> LOCUTORA
+                else if (cleanLabel === 'ESCRITOR') cleanLabel = 'ESCRITORA';
+            }
+        }
+
         if (cleanLabel.includes('REALIZADOR') && cleanLabel.includes('SONIDO')) {
-            cleanLabel = 'REALIZADOR (A) DE SONIDO';
+            const gender = detectGender(cleanValue);
+            if (gender === 'M') {
+                 cleanLabel = 'REALIZADOR DE SONIDO';
+            } else if (gender === 'F') {
+                 cleanLabel = 'REALIZADORA DE SONIDO';
+            } else {
+                 cleanLabel = 'REALIZADOR (A) DE SONIDO';
+            }
         } else if (cleanLabel === 'REALIZADOR' || cleanLabel === 'REALIZADOR DE SONIDOS') {
-            cleanLabel = 'REALIZADOR (A) DE SONIDO';
+            const gender = detectGender(cleanValue);
+            if (gender === 'M') {
+                 cleanLabel = 'REALIZADOR DE SONIDO';
+            } else if (gender === 'F') {
+                 cleanLabel = 'REALIZADORA DE SONIDO';
+            } else {
+                 cleanLabel = 'REALIZADOR (A) DE SONIDO';
+            }
         }
 
         if (cleanLabel === 'EMISORA') {

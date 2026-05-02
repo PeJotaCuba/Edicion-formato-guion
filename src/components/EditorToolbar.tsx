@@ -1,14 +1,15 @@
 import React from 'react';
-import { Bold, Italic, Underline, Type, MessageSquarePlus, Save, RotateCcw } from 'lucide-react';
+import { Bold, Italic, Underline, Type, MessageSquarePlus, Save, RotateCcw, Search } from 'lucide-react';
 
 interface EditorToolbarProps {
   onAddComment: () => void;
   onSave: () => void;
   onRevert: () => void;
+  onReplace: () => void;
   isDirty: boolean;
 }
 
-export function EditorToolbar({ onAddComment, onSave, onRevert, isDirty }: EditorToolbarProps) {
+export function EditorToolbar({ onAddComment, onSave, onRevert, onReplace, isDirty }: EditorToolbarProps) {
   const handleFormat = (command: string) => {
     document.execCommand(command, false, undefined);
   };
@@ -76,6 +77,14 @@ export function EditorToolbar({ onAddComment, onSave, onRevert, isDirty }: Edito
         >
           <RotateCcw className="w-4 h-4 sm:w-5 sm:h-5 sm:mr-1" />
           <span className="hidden sm:inline text-xs font-bold uppercase">Revertir</span>
+        </button>
+        <button
+          onClick={onReplace}
+          className="p-1.5 sm:p-2 text-indigo-700 hover:bg-indigo-100 rounded transition-colors shadow-sm flex items-center"
+          title="Buscar y Reemplazar"
+        >
+          <Search className="w-4 h-4 sm:w-5 sm:h-5 sm:mr-1" />
+          <span className="hidden sm:inline text-xs font-bold uppercase">Reemplazar</span>
         </button>
         <button
           onClick={onSave}
