@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Download, Loader2, Mic, RotateCcw, Sparkles, FileText, Upload, Settings, Printer, Share2, ClipboardList } from 'lucide-react';
-import { generateRadioScriptDocx } from './services/docxService';
+import { generateDocxFromHtml } from './services/docxService';
 import { RadioScript } from './types';
 import * as mammoth from 'mammoth';
 import { parseScriptLocally } from './services/localParser';
@@ -9,11 +9,75 @@ import { EditorBlock } from './components/EditorBlock';
 import { EditorToolbar } from './components/EditorToolbar';
 import { InformeModal } from './components/InformeModal';
 
+function scriptDataToHtml(script: RadioScript): string {
+   let html = '<div id="script-credits" style="margin-bottom: 24px; padding-bottom: 24px; border-bottom: 1px solid #f1f5f9;">';
+   script.credits.forEach(c => {
+      // Modify credit based on gender identified from ":"
+      let creditLabel = c.label;
+      if (creditLabel === 'REALIZADOR DE SONIDO' || creditLabel === 'REALIZADOR(A) DE SONIDO') {
+         const nameParts = c.value.split(':');
+         let name = nameParts.length > 1 ? nameParts[1].trim().toUpperCase() : c.value.trim().toUpperCase();
+         if (!name && nameParts.length === 1) name = nameParts[0].trim().toUpperCase();
+         
+         const isFemale = /\b(MARIA|MARÍA|ANA|LAURA|CARMEN|SOFIA|SOFÍA|JULIA|PAULA|ANDREA|DIANA|MARTA|PATRICIA|ELENA|LUCIA|LUCÍA|CARLA|SARA|ISABEL|BEATRIZ)\b/.test(name);
+         const isMale = /\b(JOSE|JOSÉ|JUAN|CARLOS|LUIS|MANUEL|DAVID|JORGE|PABLO|RAUL|RAÚL|PEDRO|ALEJANDRO|DIEGO|MIGUEL|FRANCISCO|JAVIER)\b/.test(name);
+         
+         if (isFemale) creditLabel = 'REALIZADORA DE SONIDO';
+         else if (isMale) creditLabel = 'REALIZADOR DE SONIDO';
+         else creditLabel = 'REALIZADOR (A) DE SONIDO';
+      }
+      html += `<div style="line-height: normal;"><b>${creditLabel}: </b>${c.value}</div>`;
+   });
+   html += '</div><div id="script-body">';
+   script.body.forEach(item => {
+      if (item.type === 'speaker') {
+         const paragraphs = item.text || [];
+         paragraphs.forEach((p, idx) => {
+            const isFirst = idx === 0;
+            const indentStyle = isFirst ? '-2cm' : '0';
+            let bHtml = `<div style="padding-left: 2cm; text-indent: ${indentStyle};">`;
+            if (isFirst) {
+                const prefixId = item.identifier ? `${item.identifier} ` : '';
+                bHtml += `<b>${prefixId}${item.speakerName || 'LOCUTOR'}:</b> `;
+                if (item.intention) {
+                    bHtml += `<b>(${item.intention})</b> `;
+                }
+            }
+            bHtml += `${p}</div>`;
+            html += bHtml;
+         });
+      } else if (item.type === 'sound') {
+         const paragraphs = item.text || [];
+         paragraphs.forEach((p, idx) => {
+             const isFirst = idx === 0;
+             let cleanText = p;
+             const indentStyle = isFirst ? '-2cm' : '0';
+             let bHtml = `<div style="padding-left: 2cm; text-indent: ${indentStyle};">`;
+             if (isFirst) {
+                 cleanText = cleanText.replace(/^(?:SON|OP)\s*:?\s*/i, '').trim();
+                 bHtml += `<b>${item.identifier} SON:</b> `;
+             }
+             bHtml += `<b><u>${cleanText.toUpperCase()}</u></b></div>`;
+             html += bHtml;
+         });
+      } else {
+         const paragraphs = item.text || [];
+         paragraphs.forEach(p => {
+             html += `<div style="padding-left: 2cm;">${p}</div>`;
+         });
+      }
+   });
+   html += '</div>';
+   return html;
+}
+
 export default function App() {
   const [inputText, setInputText] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [scriptData, setScriptData] = useState<RadioScript | null>(null);
   const [originalScriptData, setOriginalScriptData] = useState<RadioScript | null>(null);
+  const [editorHtml, setEditorHtml] = useState<string>('');
+  const editorRef = useRef<HTMLDivElement>(null);
   const [history, setHistory] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [showInforme, setShowInforme] = useState(false);
@@ -21,19 +85,17 @@ export default function App() {
 
   // Debounced history capture
   useEffect(() => {
-    if (scriptData) {
-      const timer = setTimeout(() => {
-        setHistory(prev => {
-          const currentStr = JSON.stringify(scriptData);
-          if (prev.length === 0 || prev[prev.length - 1] !== currentStr) {
-            return [...prev, currentStr].slice(-50); // limit to 50
-          }
-          return prev;
-        });
-      }, 500); // 500ms debounce
-      return () => clearTimeout(timer);
-    }
-  }, [scriptData]);
+    const timer = setTimeout(() => {
+      setHistory(prev => {
+        const currentStr = editorHtml || '';
+        if (prev.length === 0 || prev[prev.length - 1] !== currentStr) {
+          return [...prev, currentStr].slice(-50); // limit to 50
+        }
+        return prev;
+      });
+    }, 500); // 500ms debounce
+    return () => clearTimeout(timer);
+  }, [editorHtml]);
   const [commentModal, setCommentModal] = useState<{ active: boolean, range: Range | null }>({ active: false, range: null });
   const previewRef = useRef<HTMLElement>(null);
   
@@ -89,24 +151,33 @@ export default function App() {
         previewEl.removeEventListener('click', handlePointerEvent);
         previewEl.removeEventListener('mouseover', handlePointerEvent);
      };
-  }, [scriptData, activeTab]);
+  }, [editorHtml, activeTab]);
 
   const handleSave = () => {
     setIsDirty(false);
   };
 
   const handleRevert = () => {
-    setHistory(prev => {
-      if (prev.length > 1) {
-        const newHistory = [...prev];
-        newHistory.pop(); // remove current state
-        const previousStateStr = newHistory[newHistory.length - 1];
-        setScriptData(JSON.parse(previousStateStr));
+    if (history.length === 0) return;
+
+    const currentSavedState = history[history.length - 1];
+    
+    // If the editor has changes that haven't been pushed to history yet (due to debounce)
+    if (editorHtml !== currentSavedState) {
+        setEditorHtml(currentSavedState);
         setIsDirty(true);
-        return newHistory;
-      }
-      return prev;
-    });
+        return;
+    }
+
+    // Otherwise, pop from history to go to previous state
+    if (history.length > 1) {
+        const newHistory = [...history];
+        newHistory.pop(); // remove current state
+        const prevState = newHistory[newHistory.length - 1];
+        setEditorHtml(prevState);
+        setHistory(newHistory);
+        setIsDirty(true);
+    }
   };
 
   const requireSaveBeforeAction = (action: () => void) => {
@@ -134,7 +205,11 @@ export default function App() {
           const normalized = normalizeScriptNumbering(localParsedData);
           setScriptData(normalized);
           setOriginalScriptData(JSON.parse(JSON.stringify(normalized)));
-          setHistory([JSON.stringify(normalized)]);
+          
+          const newHtml = scriptDataToHtml(normalized);
+          setEditorHtml(newHtml);
+          setHistory([newHtml]);
+
           // Auto-scroll on generated
           if (window.innerWidth < 768) {
              setActiveTab('preview');
@@ -163,6 +238,7 @@ export default function App() {
   const handleClear = () => {
     setInputText('');
     setScriptData(null);
+    setEditorHtml('');
     setOriginalScriptData(null);
     setHistory([]);
     setIsDirty(false);
@@ -305,10 +381,10 @@ export default function App() {
   };
 
   const handleDownload = async () => {
-    if (!scriptData) return;
+    if (!editorHtml) return;
     
     try {
-      const blob = await generateRadioScriptDocx(scriptData, { fontSize, lineSpacing, paragraphSpacing });
+      const blob = await generateDocxFromHtml(editorHtml, { fontSize, lineSpacing, paragraphSpacing });
       const url = URL.createObjectURL(blob);
       
       const fileName = getFileName(scriptData);
@@ -381,52 +457,36 @@ export default function App() {
   };
 
   const handleReplaceAll = (forceReplacement?: string) => {
-       if (!replaceModal.text || !scriptData) return;
+       if (!replaceModal.text || !editorHtml) return;
        const { text, isPattern } = replaceModal;
        const rep = forceReplacement !== undefined ? forceReplacement : replaceModal.replaceWidth;
 
-       setScriptData(prev => {
-          if (!prev) return prev;
-          const fresh = JSON.parse(JSON.stringify(prev));
-          let regex: RegExp;
-          if (isPattern) {
-             if (text.startsWith('(')) {
-                 const prefixMatch = text.match(/^\((.*?)\d+/);
-                 if (prefixMatch && prefixMatch[1]) {
-                     const safePrefix = prefixMatch[1].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                     regex = new RegExp(`\\(${safePrefix}\\d+[^)]*\\)`, 'g');
-                 } else {
-                     regex = /\([^)]*\)/g;
-                 }
-             } else {
-                 const match = text.match(/^\[(.*?)(\s+\d+)?\]$/);
-                 if (match) {
-                     const baseWord = match[1].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                     regex = new RegExp(`\\[\\s*${baseWord}\\s*(\\d+)?\\s*\\]`, 'gi');
-                 } else {
-                     regex = new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
-                 }
-             }
+       let regex: RegExp;
+       if (isPattern) {
+          if (text.startsWith('(')) {
+              const prefixMatch = text.match(/^\((.*?)\d+/);
+              if (prefixMatch && prefixMatch[1]) {
+                  const safePrefix = prefixMatch[1].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                  regex = new RegExp(`\\(${safePrefix}\\d+[^)]*\\)`, 'g');
+              } else {
+                  regex = /\([^)]*\)/g;
+              }
           } else {
-             regex = new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+              const match = text.match(/^\[(.*?)(\s+\d+)?\]$/);
+              if (match) {
+                  const baseWord = match[1].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                  regex = new RegExp(`\\[\\s*${baseWord}\\s*(\\d+)?\\s*\\]`, 'gi');
+              } else {
+                  regex = new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
+              }
           }
+       } else {
+          regex = new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+       }
 
-          fresh.body.forEach((item: any) => {
-              if (item.text) {
-                  item.text = item.text.map((p: string) => p.replace(regex, rep));
-              }
-              if (item.speakerName) {
-                  item.speakerName = item.speakerName.replace(regex, rep);
-              }
-              if (item.intention) {
-                  item.intention = item.intention.replace(regex, rep);
-              }
-          });
-          fresh.credits.forEach((c: any) => {
-              c.value = c.value.replace(regex, rep);
-          });
-          return fresh;
-       });
+       const newHtml = editorHtml.replace(regex, rep);
+       setEditorHtml(newHtml);
+       
        setReplaceModal({ active: false, text: "", replaceWidth: "", isPattern: false });
        setIsDirty(true);
   };
@@ -461,51 +521,6 @@ export default function App() {
          setIsDirty(true);
      }
      setCommentModal({ active: false, range: null });
-  };
-
-  const updateScriptBodyText = (itemIndex: number, textIndex: number, newHtml: string) => {
-     setScriptData(prev => {
-        if (!prev) return prev;
-        const newBody = [...prev.body];
-        const newTextList = [...newBody[itemIndex].text];
-        newTextList[textIndex] = newHtml;
-        newBody[itemIndex] = { ...newBody[itemIndex], text: newTextList };
-        return { ...prev, body: newBody };
-     });
-     setIsDirty(true);
-  };
-
-  const updateSpeakerProps = (itemIndex: number, newHtml: string, type: 'name' | 'intention') => {
-     setScriptData(prev => {
-        if (!prev) return prev;
-        const newBody = [...prev.body];
-        const cleanContent = newHtml.replace(/<[^>]+>/g, '').trim(); // strip html for core identifying fields
-        
-        if (type === 'name') {
-           // We expect something like "01 LOCUTOR:"
-           const match = cleanContent.match(/^(?:(\d+)\s+)?([^:]+):?$/i);
-           const id = match && match[1] ? match[1] : '';
-           const name = match && match[2] ? match[2] : cleanContent.replace(':', '');
-           
-           newBody[itemIndex] = { ...newBody[itemIndex], identifier: id, speakerName: name };
-        } else if (type === 'intention') {
-           const intention = cleanContent.replace(/^\(/, '').replace(/\)$/, '');
-           newBody[itemIndex] = { ...newBody[itemIndex], intention };
-        }
-        
-        return { ...prev, body: newBody };
-     });
-     setIsDirty(true);
-  };
-
-  const updateCredit = (index: number, newHtml: string) => {
-    setScriptData(prev => {
-        if (!prev) return prev;
-        const newCredits = [...prev.credits];
-        newCredits[index] = { ...newCredits[index], value: newHtml };
-        return { ...prev, credits: newCredits };
-    });
-    setIsDirty(true);
   };
 
   return (
@@ -778,105 +793,25 @@ export default function App() {
               }
             }}
           >
-            {scriptData ? (
+            {editorHtml ? (
                 /* The "Paper" - Carta (Letter) Size: 21.59cm x 27.94cm. Using flex-col and h-auto to ensure background covers all text. */
                 <div 
                   className="w-full max-w-[21.59cm] min-h-[27.94cm] h-auto bg-white shadow-xl relative mb-12 flex flex-col shrink-0" 
                 >
-                    <div 
-                        className="p-8 sm:p-[1.5cm] sm:pt-[2cm] sm:pb-[2.5cm] flex-1"
-                          style={{ 
-                              fontFamily: 'Arial, sans-serif',
-                              fontSize: `${fontSize}pt`,
-                              lineHeight: lineSpacing,
-                              color: '#000'
-                          }}
-                      >
-                      {/* Header Block */}
-                      <div className="mb-10 space-y-2 border-b border-slate-100 pb-6">
-                        {scriptData.credits.map((c, i) => (
-                          <div key={i} className="leading-snug">
-                            <span className="font-bold uppercase">{c.label}: </span>
-                            <EditorBlock 
-                                html={c.value}
-                                onChange={(html) => updateCredit(i, html)}
-                                className="inline"
-                            />
-                          </div>
-                        ))}
-                      </div>
-
-                      {/* Script Content */}
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: `${paragraphSpacing}pt` }}>
-                        {scriptData.body.map((item, i) => {
-                          if (item.type === 'sound') {
-                             const paragraphs = item.text || [];
-                             return paragraphs.map((p, idx) => {
-                                 const cleanText = idx === 0 ? p.replace(/^(?:SON|OP)\s*:?\s*/i, '').trim() : p;
-                                 return (
-                                   <div key={`${i}-${idx}`} style={{ paddingLeft: '2cm', textIndent: idx === 0 ? '-2cm' : '0' }}>
-                                     {idx === 0 && (
-                                         <span className="font-bold uppercase">
-                                           <EditorBlock 
-                                              html={`${item.identifier} SON:`}
-                                              onChange={(html) => updateSpeakerProps(i, html, 'name')}
-                                              className="inline"
-                                           /> 
-                                         </span>
-                                     )}
-                                     <EditorBlock 
-                                        html={cleanText}
-                                        onChange={(html) => updateScriptBodyText(i, idx, html)}
-                                        className="font-bold uppercase underline underline-offset-2 inline" 
-                                     />
-                                   </div>
-                                 );
-                             });
-                          } else if (item.type === 'speaker') {
-                             const paragraphs = item.text || [];
-                             return paragraphs.map((p, idx) => (
-                                 <div key={`${i}-${idx}`} style={{ paddingLeft: '2cm', textIndent: idx === 0 ? '-2cm' : '0' }}>
-                                   {idx === 0 && (
-                                       <>
-                                         <span className="font-bold uppercase">
-                                           <EditorBlock 
-                                              html={`${item.identifier ? `${item.identifier} ` : ''}${item.speakerName || 'LOCUTOR'}:`}
-                                              onChange={(html) => updateSpeakerProps(i, html, 'name')}
-                                              className="inline"
-                                           />
-                                         </span>
-                                         {item.intention && <span className="font-bold uppercase"> 
-                                            <EditorBlock 
-                                               html={`(${item.intention})`}
-                                               onChange={(html) => updateSpeakerProps(i, html, 'intention')} 
-                                               className="inline"
-                                            />
-                                         </span>}
-                                         <span> </span>
-                                       </>
-                                   )}
-                                   <EditorBlock 
-                                       html={p}
-                                       onChange={(html) => updateScriptBodyText(i, idx, html)}
-                                       className="inline"
-                                   />
-                                 </div>
-                             ));
-                          } else if (item.type === 'text') {
-                            const paragraphs = item.text || [];
-                            return paragraphs.map((p, idx) => (
-                                <div key={`${i}-${idx}`} className="text-slate-700" style={{ paddingLeft: '2cm' }}>
-                                  <EditorBlock 
-                                       html={p}
-                                       onChange={(html) => updateScriptBodyText(i, idx, html)}
-                                       className="inline" 
-                                   />
-                                </div>
-                            ));
-                          }
-                        })}
-                      </div>
-                    </div>
+                     <EditorBlock 
+                        className="p-8 sm:p-[1.5cm] sm:pt-[2cm] sm:pb-[2.5cm] flex-1 min-h-full block w-full outline-none focus:outline-none focus:ring-0"
+                        html={editorHtml}
+                        onChange={(html) => {
+                             setEditorHtml(html);
+                             setIsDirty(true);
+                        }}
+                        style={{ 
+                            fontFamily: 'Arial, sans-serif',
+                            fontSize: `${fontSize}pt`,
+                            lineHeight: lineSpacing,
+                            color: '#000'
+                        }}
+                     />
                 </div>
             ) : (
                 <div className="flex-1 flex flex-col items-center justify-center text-slate-400 p-8 text-center max-w-sm">

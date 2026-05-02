@@ -160,16 +160,8 @@ export async function generateRadioScriptDocx(scriptData: RadioScript, settings:
             {
                 properties: {
                     page: {
-                        size: {
-                            width: 12240,
-                            height: 15840,
-                        },
-                        margin: {
-                            top: 720,
-                            right: 720,
-                            bottom: 720,
-                            left: 720,
-                        },
+                        size: { width: 12240, height: 15840 },
+                        margin: { top: 720, right: 720, bottom: 720, left: 720 },
                     },
                 },
                 headers: {
@@ -181,7 +173,7 @@ export async function generateRadioScriptDocx(scriptData: RadioScript, settings:
                                     new TextRun({
                                         children: [PageNumber.CURRENT],
                                         bold: true,
-                                        size: 24, // 12pt
+                                        size: 24,
                                         font: "Arial"
                                     })
                                 ]
@@ -189,7 +181,130 @@ export async function generateRadioScriptDocx(scriptData: RadioScript, settings:
                         ]
                     })
                 },
-                children: children,
+                children: children.length > 0 ? children : [new Paragraph("")],
+            },
+        ],
+    });
+
+    return await Packer.toBlob(doc);
+}
+
+export async function generateDocxFromHtml(htmlString: string, settings: DocxSettings): Promise<Blob> {
+    const TWIPS_2CM = 1134;
+    const children: Paragraph[] = [];
+
+    const temp = document.createElement('div');
+    temp.innerHTML = htmlString;
+
+    const lineSpacingTwips = Math.round(settings.lineSpacing * 240);
+    const afterSpacingTwips = settings.paragraphSpacing * 20;
+
+    // Traverse the top level elements
+    temp.childNodes.forEach(node => {
+        if (node.nodeType === Node.ELEMENT_NODE) {
+            const el = node as HTMLElement;
+            
+            // if it's the credits wrapper
+            if (el.id === 'script-credits') {
+                el.childNodes.forEach(creditNode => {
+                    if (creditNode.nodeType === Node.ELEMENT_NODE) {
+                        children.push(new Paragraph({
+                            children: parseHtmlToTextRuns((creditNode as HTMLElement).innerHTML)
+                        }));
+                    }
+                });
+                children.push(new Paragraph({ text: "" }));
+            } 
+            else if (el.id === 'script-body') {
+                el.childNodes.forEach(bodyNode => {
+                    if (bodyNode.nodeType === Node.ELEMENT_NODE) {
+                        const bEl = bodyNode as HTMLElement;
+                        const indentStyle = bEl.style.textIndent;
+                        const isHanging = indentStyle === '-2cm' || indentStyle.includes('-');
+                        
+                        children.push(new Paragraph({
+                            indent: { left: TWIPS_2CM, hanging: isHanging ? TWIPS_2CM : 0 },
+                            children: parseHtmlToTextRuns(bEl.innerHTML),
+                            tabStops: isHanging ? [{ type: "left", position: TWIPS_2CM }] : []
+                        }));
+                    }
+                });
+            } else {
+                // If the user deleted the wrappers, fallback to parsing paragraphs
+                const isHanging = el.style.textIndent === '-2cm' || el.style.textIndent.includes('-');
+                const padLeft = el.style.paddingLeft === '2cm' || el.style.paddingLeft.includes('2');
+                children.push(new Paragraph({
+                    indent: padLeft ? { left: TWIPS_2CM, hanging: isHanging ? TWIPS_2CM : 0 } : undefined,
+                    children: parseHtmlToTextRuns(el.innerHTML),
+                    tabStops: isHanging ? [{ type: "left", position: TWIPS_2CM }] : []
+                }));
+            }
+        }
+    });
+
+    // If completely empty due to wrapper destruction, parse children sequentially
+    if (children.length === 0) {
+        temp.childNodes.forEach(el => {
+             if (el.nodeType === Node.ELEMENT_NODE) {
+                const htmlEl = el as HTMLElement;
+                const isHanging = htmlEl.style.textIndent === '-2cm' || htmlEl.style.textIndent.includes('-');
+                const padLeft = htmlEl.style.paddingLeft === '2cm' || htmlEl.style.paddingLeft.includes('2');
+                children.push(new Paragraph({
+                    indent: padLeft ? { left: TWIPS_2CM, hanging: isHanging ? TWIPS_2CM : 0 } : undefined,
+                    children: parseHtmlToTextRuns(htmlEl.innerHTML),
+                    tabStops: isHanging ? [{ type: "left", position: TWIPS_2CM }] : []
+                }));
+             } else if (el.nodeType === Node.TEXT_NODE && el.textContent?.trim()) {
+                 children.push(new Paragraph({
+                     children: parseHtmlToTextRuns(el.textContent)
+                 }));
+             }
+        });
+    }
+
+    const doc = new Document({
+        styles: {
+            default: {
+                document: {
+                    run: {
+                        size: settings.fontSize * 2,
+                        font: "Arial",
+                    },
+                    paragraph: {
+                        spacing: {
+                            line: lineSpacingTwips,
+                            after: afterSpacingTwips,
+                        },
+                    },
+                },
+            },
+        },
+        sections: [
+            {
+                properties: {
+                    page: {
+                        size: { width: 12240, height: 15840 },
+                        margin: { top: 720, right: 720, bottom: 720, left: 720 },
+                    },
+                },
+                headers: {
+                    default: new Header({
+                        children: [
+                            new Paragraph({
+                                alignment: AlignmentType.RIGHT,
+                                children: [
+                                    new TextRun({
+                                        children: [PageNumber.CURRENT],
+                                        bold: true,
+                                        size: 24,
+                                        font: "Arial"
+                                    })
+                                ]
+                            })
+                        ]
+                    })
+                },
+                children: children.length > 0 ? children : [new Paragraph("")],
             },
         ],
     });
