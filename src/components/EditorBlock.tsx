@@ -1,38 +1,34 @@
-import React, { useRef, useEffect, useState, memo } from 'react';
+import React, { useRef, useEffect, memo } from 'react';
 
 interface EditorBlockProps {
   html: string;
+  externalVersion?: number; // Only updates innerHTML when this changes
   onChange: (newHtml: string) => void;
   className?: string;
   style?: React.CSSProperties;
 }
 
-export const EditorBlock = memo(function EditorBlock({ html, onChange, className, style }: EditorBlockProps) {
+export const EditorBlock = memo(function EditorBlock({ html, externalVersion = 0, onChange, className, style }: EditorBlockProps) {
   const contentEditableRef = useRef<HTMLDivElement>(null);
+  const lastVersionRef = useRef(externalVersion);
   const lastHtmlRef = useRef(html);
 
-  // Set initial content and handle external updates
+  // Sync incoming html changes ONLY when externalVersion changes (e.g. Undo, Revert)
+  // or on initial mount where DOM is empty
   useEffect(() => {
-    if (contentEditableRef.current && lastHtmlRef.current !== html) {
-      // If the html prop diverges from our last seen internal state,
-      // it means an external event (Undo, Replace All, etc.) happened.
-      // We must sync the DOM even if focused, though this may move the caret.
-      contentEditableRef.current.innerHTML = html;
-      lastHtmlRef.current = html;
+    if (!contentEditableRef.current) return;
+    
+    // Check if the external version incremented, or if the DOM is completely empty but we have html
+    if (externalVersion !== lastVersionRef.current || (html && !contentEditableRef.current.innerHTML)) {
+        contentEditableRef.current.innerHTML = html;
+        lastHtmlRef.current = html;
+        lastVersionRef.current = externalVersion;
     }
-  }, [html]);
-
-  // Initial mount: ensure innerHTML is set if not already handled by useEffect above
-  useEffect(() => {
-    if (contentEditableRef.current && !contentEditableRef.current.innerHTML && html) {
-      contentEditableRef.current.innerHTML = html;
-      lastHtmlRef.current = html;
-    }
-  }, []);
+  }, [html, externalVersion]);
 
   const handleInput = (e: React.FormEvent<HTMLDivElement>) => {
+    // Only update ref and trigger onChange, let DOM be uncontrolled
     const newHtml = e.currentTarget.innerHTML;
-    // Update ref immediately to prevent the useEffect from triggering a redundant update
     lastHtmlRef.current = newHtml;
     onChange(newHtml);
   };
@@ -48,10 +44,9 @@ export const EditorBlock = memo(function EditorBlock({ html, onChange, className
     />
   );
 }, (prev, next) => {
-    // Only re-render if html actually changes to something we haven't seen.
-    // We also ignore style and className changes if they are deep-equal but for simplicity 
-    // we'll just check what's necessary.
     return prev.html === next.html && 
+           prev.externalVersion === next.externalVersion &&
            prev.className === next.className &&
            JSON.stringify(prev.style) === JSON.stringify(next.style);
 });
+

@@ -7,7 +7,12 @@ export interface ScriptItem {
 }
 
 export interface RadioScript {
+  isMonologo?: boolean;
   credits: {
+    label: string;
+    value: string;
+  }[];
+  rawCredits?: {
     label: string;
     value: string;
   }[];

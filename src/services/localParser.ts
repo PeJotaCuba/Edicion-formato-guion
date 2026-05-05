@@ -4,6 +4,15 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
     // Dividir por líneas y descartar vacías
     const paragraphs = inputText.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
     
+    // Detect if it starts with "MONOLOGO"
+    let isMonologo = false;
+    if (paragraphs.length > 0) {
+        const firstPFlat = paragraphs[0].replace(/<[^>]+>/g, '').trim().toUpperCase();
+        if (firstPFlat.startsWith('MONOLOGO') || firstPFlat.startsWith('MONÓLOGO')) {
+            isMonologo = true;
+        }
+    }
+    
     // First pass: Identify dynamic speaker names that are numbered explicitly or known
     const knownSpeakers = new Set<string>(['LOC', 'LOCUTOR', 'LOCUTORA', 'PERIODISTA', 'ANIMADOR', 'ANIMADORA']);
     for (const p of paragraphs) {
@@ -60,21 +69,59 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
         // Matcher para sonido: OJO, no exigimos dos puntos aquí para hacerlo robusto
         const soundMatch = flatP.match(/^[\(]?([IVXLCDM]*|[\d]*)[\)]?[\s.:]*(SON|SONIDO|OP|EFECTO|MÚSICA)\b[^\w]*(.*)$/i);
         if (soundMatch) {
-            parsingCredits = false;
-            foundValidContent = true;
-            let id = soundMatch[1] || "";
+            let id = (soundMatch[1] || "").trim();
+            const kw = soundMatch[2].toUpperCase();
+            const textAfter = (soundMatch[3] || "").trim();
+            const textAfterPlain = textAfter.replace(/<[^>]+>/g, '').trim();
             
-            // Get original remaining text with tags
-            const headerLength = flatP.length - (soundMatch[3] ? soundMatch[3].length : 0);
-            const originalOffset = getOriginalIndex(p, headerLength);
-            let remainingText = p.substring(originalOffset).trim();
+            let isActualSound = false;
+            const isRoman = id.length > 0 && /^[IVXLCDM]+$/i.test(id);
+            const isArabic = id.length > 0 && /^\d+$/.test(id);
             
-            body.push({
-                type: 'sound',
-                identifier: id.toUpperCase(),
-                text: [remainingText]
-            });
-            continue;
+            if (kw === 'EFECTO' || kw === 'MÚSICA') {
+                // Estos keywords siempre se consideran sonidos/órdenes técnicas
+                isActualSound = true;
+            } else if (isRoman && (kw === 'SON' || kw === 'SONIDO' || kw === 'OP')) {
+                // Regla 1: Numero romano + (SON | SONIDO | OP)
+                isActualSound = true;
+            } else if (kw === 'SON' || kw === 'SONIDO') {
+                // Regla 2: SON/SONIDO + Mayúsculas (si no hay ID o si el ID no es romano)
+                // Usamos el texto tras el término para decidir si es una orden o texto narrativo
+                const alphaOnly = textAfterPlain.replace(/[^a-zA-ZÁÉÍÓÚÑáéíóúñ]/g, '');
+                if (alphaOnly.length > 0) {
+                    if (alphaOnly === alphaOnly.toUpperCase()) {
+                        isActualSound = true;
+                    }
+                } else if (textAfterPlain.length > 0 || isArabic) {
+                    // Si no hay letras pero hay algo (puntos, etc), o si tiene un ID arábigo suele ser orden técnica
+                    isActualSound = true;
+                } else if (soundMatch[2] === soundMatch[2].toUpperCase()) {
+                    // Si no hay nada después pero la palabra está en mayúsculas (ej: "SON")
+                    isActualSound = true;
+                }
+            } else if (kw === 'OP') {
+                // OP sin número romano: solo si parece una orden técnica (ej. OP 1, o OP.)
+                if (isArabic || id === "" || textAfterPlain.length > 0) {
+                    isActualSound = true;
+                }
+            }
+            
+            if (isActualSound) {
+                parsingCredits = false;
+                foundValidContent = true;
+                
+                // Get original remaining text with tags
+                const headerLength = flatP.length - (soundMatch[3] ? soundMatch[3].length : 0);
+                const originalOffset = getOriginalIndex(p, headerLength);
+                let remainingText = p.substring(originalOffset).trim();
+                
+                body.push({
+                    type: 'sound',
+                    identifier: id.toUpperCase(),
+                    text: [remainingText]
+                });
+                continue;
+            }
         }
         
         let handledSpeaker = false;
@@ -99,13 +146,18 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
             const originalOffset = getOriginalIndex(p, headerLength);
             textExtracted = p.substring(originalOffset).trim();
         } else {
-            // Attempt format 2: No colon, but explicit number + known speaker
-            const noColonMatch = flatP.match(/^[\(]?(\d+)[\)]?[\s.-]*([A-ZÁÉÍÓÚÑa-záéíóúñ\s]{2,30})\b\s*(?:\(([^)]+)\))?\s*(.*)$/i);
+            // Attempt format 2: No colon, but explicit number + known speaker OR intention OR uppercase short name
+            const noColonMatch = flatP.match(/^[\(]?(\d+)[\)]?[\s.-]*([A-ZÁÉÍÓÚÑa-záéíóúñ\s]{2,40})\b\s*(?:\(([^)]+)\))?\s*(.*)$/i);
             if (noColonMatch) {
                 let originalNamePart = noColonMatch[2].trim();
                 let tempName = originalNamePart.toUpperCase();
-                // Only consider it a speaker without a colon if it's a known speaker
-                if (knownSpeakers.has(tempName)) {
+                
+                const isAllUpperCase = tempName === originalNamePart;
+                const hasIntention = !!noColonMatch[3];
+                const cleanWordsCount = tempName.split(' ').filter(w => w.length > 0).length;
+
+                // Consider it a speaker if it's a known speaker, OR it has an intention like (REFLEXIVO), OR it's uppercase and short
+                if (knownSpeakers.has(tempName) || hasIntention || (isAllUpperCase && cleanWordsCount <= 4)) {
                     id = noColonMatch[1];
                     name = tempName;
                     intention = noColonMatch[3] ? noColonMatch[3].trim().toUpperCase() : "";
@@ -138,10 +190,20 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
         }
         
         if (isSpeaker) {
-            const isCreditLabel = name.match(/^(EMISORA|PROGRAMA|EMISI[OÓ]N|FECHA|FECHA DE TRANSMISI[OÓ]N|FECHA DE GRABACI[OÓ]N|ESCRIBE|ESCRITOR|GUI[OÓ]N|GUION|ASESOR|ASESORA|DIRIGE|DIRECTOR|DIRECCI[OÓ]N|DIRECCI[OÓ]N GENERAL|REDACCI[OÓ]N|TEMA|REALIZADOR|REALIZADOR DE SONIDO|REALIZADOR DE SONIDOS|LOCUTOR|LOCUTORA|LOC)$/);
+            const isCreditLabel = name.match(/^(EMISORA|PROGRAMA|EMISI[OÓ]N|FECHA|FECHA DE TRANSMISI[OÓ]N|FECHA DE GRABACI[OÓ]N|ESCRIBE|ESCRITOR|GUI[OÓ]N|GUION|ASESOR|ASESORA|DIRIGE|DIRECTOR|DIRECCI[OÓ]N|DIRECCI[OÓ]N GENERAL|REDACCI[OÓ]N|TEMA|REALIZADOR|REALIZADOR DE SONIDO|REALIZADOR DE SONIDOS|LOCUTOR|LOCUTORA|LOC|SECCI[OÓ]N|ACTOR|ACTRIZ|T[ÍI]TULO|FORMATO)$/);
             
+            const isSpeakerRole = /^(LOCUTOR|LOCUTORA|LOC|ACTOR|ACTRIZ|ANIMADOR|ANIMADORA|PERIODISTA)$/i.test(name);
+
             if (isCreditLabel && (!id || id.trim() === '')) {
-                isSpeaker = false; 
+                if (isSpeakerRole) {
+                    if (parsingCredits && textExtracted.length < 100) {
+                        // Si estamos en zona de créditos y el texto es corto, es un crédito (ej. LOCUTOR: Pedro)
+                        isSpeaker = false;
+                    }
+                } else {
+                    // No es un rol de hablante (ej. PROGRAMA, TEMA), siempre es crédito
+                    isSpeaker = false; 
+                }
             } else if (parsingCredits && !id && name.length > 25) {
                 isSpeaker = false;
             } else if (parsingCredits && !id && !knownSpeakers.has(name) && !isCreditLabel) {
@@ -173,7 +235,7 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
         // Matcher para créditos
         if (parsingCredits) {
             const creditMatch = flatP.match(/^([a-zA-ZÁÉÍÓÚáéíóúñÑ\s\(\)]+):\s*(.*)$/i);
-            const kwMatch = flatP.match(/^(EMISORA|PROGRAMA|EMISI[OÓ]N|FECHA(?: DE TRANSMISI[OÓ]N| DE GRABACI[OÓ]N)?|ESCRIBE|ESCRITOR|GUI[OÓ]N|GUION|ASESOR|ASESORA|DIRIGE|DIRECTOR|TEMA|REALIZADOR(?: DE SONIDO| DE SONIDOS)?|LOC(?:UTOR|UTORA)?)\b[\s:.-]*(.*)$/i);
+            const kwMatch = flatP.match(/^(EMISORA|PROGRAMA|EMISI[OÓ]N|FECHA(?: DE TRANSMISI[OÓ]N| DE GRABACI[OÓ]N)?|ESCRIBE|ESCRITOR|GUI[OÓ]N|GUION|ASESOR|ASESORA|DIRIGE|DIRECTOR|TEMA|REALIZADOR(?: DE SONIDO| DE SONIDOS)?|LOC(?:UTOR|UTORA)?|SECCI[OÓ]N|ACTOR|ACTRIZ|T[ÍI]TULO|FORMATO)\b[\s:.-]*(.*)$/i);
 
             if (kwMatch) {
                 // Get original value with tags
@@ -183,15 +245,18 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
                 let val = p.substring(originalOffset).trim();
                 
                 // Limpiar el valor si empieza por ":" o "." accidentalmente
-                // We do this on the text version to be safe
                 let textVal = val.replace(/<[^>]+>/g, '').trim();
-                while (textVal.startsWith(':') || textVal.startsWith('.')) {
-                    // Try to find the first colon/dot in original to strip it safely
+                let failsafe = 0;
+                while ((textVal.startsWith(':') || textVal.startsWith('.')) && failsafe < 20) {
                     const firstCharIdx = val.search(/[:.]/);
-                    if (firstCharIdx !== -1 && firstCharIdx < 5) {
-                        val = val.substring(firstCharIdx + 1).trim();
+                    if (firstCharIdx !== -1) {
+                        val = val.substring(0, firstCharIdx) + val.substring(firstCharIdx + 1);
+                        val = val.trim();
+                    } else {
+                        break;
                     }
                     textVal = val.replace(/<[^>]+>/g, '').trim();
+                    failsafe++;
                 }
 
                 credits.push({
@@ -213,7 +278,7 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
         // Párrafo de continuación (si pertenece a la intervención anterior)
         if (!parsingCredits) {
             // Check if it's a misplaced credit label
-            const isCreditLabel = flatP.match(/^(EMISORA|PROGRAMA|EMISI[OÓ]N|FECHA(?: DE TRANSMISI[OÓ]N| DE GRABACI[OÓ]N)?|ESCRIBE|ESCRITOR|GUI[OÓ]N|GUION|ASESOR|ASESORA|DIRIGE|DIRECTOR|TEMA|REALIZADOR(?: DE SONIDO| DE SONIDOS)?|LOC(?:UTOR|UTORA)?)\b[\s:.-]/i);
+            const isCreditLabel = flatP.match(/^(EMISORA|PROGRAMA|EMISI[OÓ]N|FECHA(?: DE TRANSMISI[OÓ]N| DE GRABACI[OÓ]N)?|ESCRIBE|ESCRITOR|GUI[OÓ]N|GUION|ASESOR|ASESORA|DIRIGE|DIRECTOR|TEMA|REALIZADOR(?: DE SONIDO| DE SONIDOS)?|SECCI[OÓ]N|T[ÍI]TULO|FORMATO)\b[\s:.-]/i);
             
             if (isCreditLabel) {
                 continue;
@@ -235,6 +300,15 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
             if (credits.length > 0) {
                 credits[credits.length - 1].value += ' ' + p;
             } else if (p.trim().length > 0) {
+                const flatP = p.replace(/<[^>]+>/g, '').trim();
+                if (flatP.length < 50 && !flatP.includes(':') && /^(MON[OÓ]LOGO|REPORTAJE|ENTREVISTA|CR[OÓ]NICA|RADIOTEATRO|DOCUMENTAL)$/i.test(flatP)) {
+                    credits.push({
+                        label: 'FORMATO',
+                        value: p.trim()
+                    });
+                    continue; // Stay in parsingCredits mode
+                }
+                
                 // Si hay texto ANTES del primer crédito, podríamos forzar su entrada al body y desactivar parsingCredits
                 parsingCredits = false;
                 body.push({
@@ -252,9 +326,12 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
     const seenLabels = new Set<string>();
 
     const templateOrder = [
+        'FORMATO',
         'EMISORA',
         'PROGRAMA',
         'EMISIÓN', // Nuevo campo solicitado
+        'SECCIÓN',
+        'TÍTULO',
         'ESCRIBE',
         'ESCRITOR',
         'ASESOR',
@@ -266,6 +343,8 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
         'REALIZADOR (A) DE SONIDO', // Formato con (A)
         'LOCUTOR',
         'LOCUTORA',
+        'ACTOR',
+        'ACTRIZ',
         'FECHA DE TRANSMISIÓN',
         'FECHA DE GRABACIÓN', // Nuevo campo solicitado
         'FECHA',
@@ -350,6 +429,7 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
     };
 
     // First, process existing credits
+    const rawCredits = [...credits];
     credits.forEach(c => {
         const normalized = findAndNormalize(c.label, c.value);
         if (!seenLabels.has(normalized.label)) {
@@ -373,5 +453,5 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
         return indexA - indexB;
     });
 
-    return { credits: normalizedCredits, body };
+    return { isMonologo, credits: normalizedCredits, rawCredits, body };
 }

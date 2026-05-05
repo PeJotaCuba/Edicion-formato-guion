@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Download, Loader2, Mic, RotateCcw, Sparkles, FileText, Upload, Settings, Printer, Share2, ClipboardList } from 'lucide-react';
+import { Download, Loader2, Mic, RotateCcw, Sparkles, FileText, Upload, Settings, Printer, Share2, ClipboardList, Trash2, CheckCircle2 } from 'lucide-react';
 import { generateDocxFromHtml } from './services/docxService';
 import { RadioScript } from './types';
 import * as mammoth from 'mammoth';
@@ -8,25 +8,50 @@ import { normalizeScriptNumbering } from './services/normalizeService';
 import { EditorBlock } from './components/EditorBlock';
 import { EditorToolbar } from './components/EditorToolbar';
 import { InformeModal } from './components/InformeModal';
+import JSZip from 'jszip';
+import { saveAs } from 'file-saver';
 
-function scriptDataToHtml(script: RadioScript): string {
+interface DocumentItem {
+  id: string;
+  originalFileName: string;
+  inputText: string;
+  scriptData: RadioScript | null;
+  originalScriptData: RadioScript | null;
+  editorHtml: string;
+  externalVersion: number;
+  history: string[];
+  isDirty: boolean;
+}
+
+function replaceMarkdownBold(text: string): string {
+    if (!text) return '';
+    let res = text.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+    res = res.replace(/\*([^*]+)\*/g, '<b>$1</b>');
+    res = res.replace(/\*/g, '');
+    return res;
+}
+
+function scriptDataToHtml(script: RadioScript, formatMode: 'all' | 'numbering' | 'credits' = 'all'): string {
    let html = '<div id="script-credits" style="margin-bottom: 24px; padding-bottom: 24px; border-bottom: 1px solid #f1f5f9;">';
    script.credits.forEach(c => {
-      // Modify credit based on gender identified from ":"
       let creditLabel = c.label;
-      if (creditLabel === 'REALIZADOR DE SONIDO' || creditLabel === 'REALIZADOR(A) DE SONIDO') {
-         const nameParts = c.value.split(':');
-         let name = nameParts.length > 1 ? nameParts[1].trim().toUpperCase() : c.value.trim().toUpperCase();
-         if (!name && nameParts.length === 1) name = nameParts[0].trim().toUpperCase();
-         
-         const isFemale = /\b(MARIA|MARÍA|ANA|LAURA|CARMEN|SOFIA|SOFÍA|JULIA|PAULA|ANDREA|DIANA|MARTA|PATRICIA|ELENA|LUCIA|LUCÍA|CARLA|SARA|ISABEL|BEATRIZ)\b/.test(name);
-         const isMale = /\b(JOSE|JOSÉ|JUAN|CARLOS|LUIS|MANUEL|DAVID|JORGE|PABLO|RAUL|RAÚL|PEDRO|ALEJANDRO|DIEGO|MIGUEL|FRANCISCO|JAVIER)\b/.test(name);
-         
-         if (isFemale) creditLabel = 'REALIZADORA DE SONIDO';
-         else if (isMale) creditLabel = 'REALIZADOR DE SONIDO';
-         else creditLabel = 'REALIZADOR (A) DE SONIDO';
+      if (formatMode === 'all' || formatMode === 'credits') {
+          if (creditLabel === 'REALIZADOR DE SONIDO' || creditLabel === 'REALIZADOR(A) DE SONIDO') {
+             const nameParts = c.value.split(':');
+             let name = nameParts.length > 1 ? nameParts[1].trim().toUpperCase() : c.value.trim().toUpperCase();
+             if (!name && nameParts.length === 1) name = nameParts[0].trim().toUpperCase();
+             
+             const isFemale = /\b(MARIA|MARÍA|ANA|LAURA|CARMEN|SOFIA|SOFÍA|JULIA|PAULA|ANDREA|DIANA|MARTA|PATRICIA|ELENA|LUCIA|LUCÍA|CARLA|SARA|ISABEL|BEATRIZ)\b/.test(name);
+             const isMale = /\b(JOSE|JOSÉ|JUAN|CARLOS|LUIS|MANUEL|DAVID|JORGE|PABLO|RAUL|RAÚL|PEDRO|ALEJANDRO|DIEGO|MIGUEL|FRANCISCO|JAVIER)\b/.test(name);
+             
+             if (isFemale) creditLabel = 'REALIZADORA DE SONIDO';
+             else if (isMale) creditLabel = 'REALIZADOR DE SONIDO';
+             else creditLabel = 'REALIZADOR (A) DE SONIDO';
+          }
       }
-      html += `<div style="line-height: normal;"><b>${creditLabel}: </b>${c.value}</div>`;
+      
+      const val = replaceMarkdownBold(c.value);
+      html += `<div style="line-height: normal;"><b>${creditLabel}: </b>${val}</div>`;
    });
    html += '</div><div id="script-body">';
    script.body.forEach(item => {
@@ -43,27 +68,27 @@ function scriptDataToHtml(script: RadioScript): string {
                     bHtml += `<b>(${item.intention})</b> `;
                 }
             }
-            bHtml += `${p}</div>`;
+            bHtml += `${replaceMarkdownBold(p)}</div>`;
             html += bHtml;
          });
       } else if (item.type === 'sound') {
          const paragraphs = item.text || [];
          paragraphs.forEach((p, idx) => {
              const isFirst = idx === 0;
-             let cleanText = p;
+             let cleanText = replaceMarkdownBold(p);
              const indentStyle = isFirst ? '-2cm' : '0';
              let bHtml = `<div style="padding-left: 2cm; text-indent: ${indentStyle};">`;
              if (isFirst) {
                  cleanText = cleanText.replace(/^(?:SON|OP)\s*:?\s*/i, '').trim();
                  bHtml += `<b>${item.identifier} SON:</b> `;
              }
-             bHtml += `<b><u>${cleanText.toUpperCase()}</u></b></div>`;
+             bHtml += `<b><u>${cleanText.toUpperCase().replace(/<B>/g, '').replace(/<\/B>/g, '')}</u></b></div>`;
              html += bHtml;
          });
       } else {
          const paragraphs = item.text || [];
          paragraphs.forEach(p => {
-             html += `<div style="padding-left: 2cm;">${p}</div>`;
+             html += `<div style="padding-left: 2cm;">${replaceMarkdownBold(p)}</div>`;
          });
       }
    });
@@ -72,16 +97,64 @@ function scriptDataToHtml(script: RadioScript): string {
 }
 
 export default function App() {
-  const [inputText, setInputText] = useState('');
+  const [docs, setDocs] = useState<DocumentItem[]>(() => {
+    const saved = localStorage.getItem('radio_scripts_docs');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [activeDocId, setActiveDocId] = useState<string | null>(null);
+
+  // Sync with localStorage
+  useEffect(() => {
+    localStorage.setItem('radio_scripts_docs', JSON.stringify(docs));
+  }, [docs]);
+
+  const activeDoc = docs.find(d => d.id === activeDocId);
+  
+  const inputText = activeDoc?.inputText || '';
+  const scriptData = activeDoc?.scriptData || null;
+  const originalScriptData = activeDoc?.originalScriptData || null;
+  const editorHtml = activeDoc?.editorHtml || '';
+  const externalVersion = activeDoc?.externalVersion || 0;
+  const history = activeDoc?.history || [];
+  const isDirty = activeDoc?.isDirty || false;
+
+  const updateActiveDoc = (updates: Partial<DocumentItem>) => {
+      setDocs(prev => prev.map(d => d.id === activeDocId ? { ...d, ...updates } : d));
+  };
+
+  const setInputText = (v: string | ((prev: string) => string)) => {
+      const val = typeof v === 'function' ? v(inputText) : v;
+      if (!activeDocId) {
+          const newId = Date.now().toString();
+          const newDoc: DocumentItem = {
+              id: newId,
+              originalFileName: 'Nuevo Documento',
+              inputText: val,
+              scriptData: null,
+              originalScriptData: null,
+              editorHtml: '',
+              externalVersion: 0,
+              history: [],
+              isDirty: false
+          };
+          setDocs(prev => [...prev, newDoc]);
+          setActiveDocId(newId);
+          return;
+      }
+      updateActiveDoc({ inputText: val });
+  };
+  const setScriptData = (v: RadioScript | null) => updateActiveDoc({ scriptData: v });
+  const setOriginalScriptData = (v: RadioScript | null) => updateActiveDoc({ originalScriptData: v });
+  const setEditorHtml = (v: string | ((prev: string) => string)) => updateActiveDoc({ editorHtml: typeof v === 'function' ? v(editorHtml) : v });
+  const setExternalVersion = (v: number | ((prev: number) => number)) => updateActiveDoc({ externalVersion: typeof v === 'function' ? v(externalVersion) : v });
+  const setHistory = (v: string[] | ((prev: string[]) => string[])) => updateActiveDoc({ history: typeof v === 'function' ? v(history) : v });
+  const setIsDirty = (v: boolean) => updateActiveDoc({ isDirty: v });
+
   const [isProcessing, setIsProcessing] = useState(false);
-  const [scriptData, setScriptData] = useState<RadioScript | null>(null);
-  const [originalScriptData, setOriginalScriptData] = useState<RadioScript | null>(null);
-  const [editorHtml, setEditorHtml] = useState<string>('');
   const editorRef = useRef<HTMLDivElement>(null);
-  const [history, setHistory] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [showInforme, setShowInforme] = useState(false);
-  const [isDirty, setIsDirty] = useState(false);
+  const [formatMode, setFormatMode] = useState<'all' | 'numbering' | 'credits'>('all');
 
   // Debounced history capture
   useEffect(() => {
@@ -100,7 +173,8 @@ export default function App() {
   const previewRef = useRef<HTMLElement>(null);
   
   // Mobile UI Tab State
-  const [activeTab, setActiveTab] = useState<'input' | 'preview'>('input');
+  const [isClearingStock, setIsClearingStock] = useState(false);
+  const [activeTab, setActiveTab] = useState<'input' | 'preview' | 'docs'>('input');
   
   // Settings state
   const [fontSize, setFontSize] = useState<number>(13);
@@ -165,6 +239,7 @@ export default function App() {
     // If the editor has changes that haven't been pushed to history yet (due to debounce)
     if (editorHtml !== currentSavedState) {
         setEditorHtml(currentSavedState);
+        setExternalVersion(externalVersion + 1);
         setIsDirty(true);
         return;
     }
@@ -175,6 +250,7 @@ export default function App() {
         newHistory.pop(); // remove current state
         const prevState = newHistory[newHistory.length - 1];
         setEditorHtml(prevState);
+        setExternalVersion(externalVersion + 1);
         setHistory(newHistory);
         setIsDirty(true);
     }
@@ -189,43 +265,50 @@ export default function App() {
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-  const processScriptText = async (textToProcess: string) => {
+  const processScriptText = async (textToProcess: string, docId?: string) => {
     if (!textToProcess.trim()) return;
     setIsProcessing(true);
     setError(null);
 
-    // Clean markdown asterisks
-    const cleanedText = textToProcess.replace(/\*\*/g, '');
+    const targetDocId = docId || activeDocId;
 
     try {
-      // Intentar el parsing local
-      const localParsedData = parseScriptLocally(cleanedText);
+      const localParsedData = parseScriptLocally(textToProcess);
       
       if (localParsedData) {
-          const normalized = normalizeScriptNumbering(localParsedData);
-          setScriptData(normalized);
-          setOriginalScriptData(JSON.parse(JSON.stringify(normalized)));
+          const normalized = normalizeScriptNumbering(localParsedData, formatMode);
+          const newHtml = scriptDataToHtml(normalized, formatMode);
           
-          const newHtml = scriptDataToHtml(normalized);
-          setEditorHtml(newHtml);
-          setHistory([newHtml]);
+          const autoName = getFileName(normalized).replace('.DOCX', '');
 
-          // Auto-scroll on generated
-          if (window.innerWidth < 768) {
-             setActiveTab('preview');
-          }
-          setTimeout(() => {
-             if (scrollContainerRef.current) {
-                scrollContainerRef.current.scrollTop = 0;
-                scrollContainerRef.current.focus();
+          setDocs(prev => prev.map(d => d.id === targetDocId ? {
+              ...d,
+              originalFileName: d.originalFileName === 'Nuevo Documento' ? autoName : d.originalFileName,
+              scriptData: normalized,
+              originalScriptData: JSON.parse(JSON.stringify(normalized)),
+              editorHtml: newHtml,
+              history: [newHtml],
+              externalVersion: d.externalVersion + 1,
+              inputText: textToProcess
+          } : d));
+
+          if (targetDocId === activeDocId) {
+             if (window.innerWidth < 768) {
+                setActiveTab('preview');
              }
-          }, 300);
+             setTimeout(() => {
+                if (scrollContainerRef.current) {
+                   scrollContainerRef.current.scrollTop = 0;
+                   scrollContainerRef.current.focus();
+                }
+             }, 300);
+          }
       } else {
           throw new Error("No se pudo extraer el contenido. Revise el archivo.");
       }
     } catch (err: any) {
       console.error(err);
-      setError(err?.message || "Ocurrió un error al generar el guion.");
+      if (targetDocId === activeDocId) setError(err?.message || "Ocurrió un error al generar el guion.");
     } finally {
       setIsProcessing(false);
     }
@@ -236,78 +319,109 @@ export default function App() {
   };
 
   const handleClear = () => {
-    setInputText('');
-    setScriptData(null);
-    setEditorHtml('');
-    setOriginalScriptData(null);
-    setHistory([]);
-    setIsDirty(false);
+    setActiveDocId(null);
     setError(null);
-    if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-    }
+  };
+
+  const handleExportBackup = () => {
+    const dataStr = JSON.stringify(docs, null, 2);
+    const blob = new Blob([dataStr], { type: "application/json" });
+    saveAs(blob, `Respaldo_Guiones_${new Date().toISOString().slice(0,10)}.json`);
+  };
+
+  const handleImportBackup = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const content = e.target?.result as string;
+        const imported = JSON.parse(content);
+        if (Array.isArray(imported)) {
+          setDocs(prev => [...prev, ...imported]);
+          setError(null);
+          if (imported.length > 0) setActiveDocId(imported[imported.length - 1].id);
+        }
+      } catch (err) {
+        setError("Error al importar el respaldo. El archivo no es válido.");
+      }
+    };
+    reader.readAsText(file);
+    event.target.value = '';
   };
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
+    const files = Array.from(event.target.files || []) as File[];
+    if (!files.length) return;
 
     setError(null);
     setIsProcessing(true);
 
     try {
-        let extractedText = '';
+        const newDocs: DocumentItem[] = [];
+        
+        for (const file of files) {
+            let extractedText = '';
 
-        if (file.name.toLowerCase().endsWith('.doc')) {
-             // Fallback rudimentario para .doc: leer como binario y extraer ASCII/Latin1
-             const arrayBuffer = await file.arrayBuffer();
-             const decoder = new TextDecoder('windows-1252');
-             const rawText = decoder.decode(arrayBuffer);
-             // Eliminar caracteres de control binarios
-             extractedText = rawText.replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F]/g, '')
-                                    .replace(/\s{2,}/g, ' ')
-                                    .trim();
-        } else {
-             // Proceso normal para .docx
-             const arrayBuffer = await file.arrayBuffer();
-             const result = await mammoth.convertToHtml({ arrayBuffer });
-             
-             let html = result.value;
-             
-             // Simplify HTML before parsing but keep core formatting
-             html = html.replace(/<p[^>]*>/gi, '').replace(/<\/p>/gi, '\n');
-             html = html.replace(/<div[^>]*>/gi, '').replace(/<\/div>/gi, '\n');
-             html = html.replace(/<tr[^>]*>/gi, '').replace(/<\/tr>/gi, '\n');
-             html = html.replace(/<br\s*[\/]?>/gi, '\n');
-             
-             extractedText = html
-                 .replace(/&nbsp;/g, ' ')
-                 .replace(/&amp;/g, '&')
-                 .replace(/&lt;/g, '<')
-                 .replace(/&gt;/g, '>')
-                 // Replace any tag that isn't one of these core formatting tags
-                 .replace(/<(?!(\/)?(b|strong|i|em|u|span)\b)[^>]+>/gi, '') 
-                 .replace(/ +/g, ' ')
-                 .trim();
+            if (file.name.toLowerCase().endsWith('.txt')) {
+                 extractedText = await file.text();
+            } else {
+                 const arrayBuffer = await file.arrayBuffer();
+                 const result = await mammoth.convertToHtml({ arrayBuffer });
+                 let html = result.value;
+                 html = html.replace(/<p[^>]*>/gi, '').replace(/<\/p>/gi, '\n');
+                 html = html.replace(/<div[^>]*>/gi, '').replace(/<\/div>/gi, '\n');
+                 html = html.replace(/<tr[^>]*>/gi, '').replace(/<\/tr>/gi, '\n');
+                 html = html.replace(/<br\s*[\/]?>/gi, '\n');
+                 extractedText = html
+                     .replace(/&nbsp;/g, ' ')
+                     .replace(/&amp;/g, '&')
+                     .replace(/&lt;/g, '<')
+                     .replace(/&gt;/g, '>')
+                     .replace(/<(?!(\/)?(b|strong|i|em|u|span)\b)[^>]+>/gi, '') 
+                     .replace(/ +/g, ' ')
+                     .trim();
+            }
+
+            if (extractedText.length >= 20) {
+               const newId = Date.now().toString() + Math.random().toString();
+               newDocs.push({
+                   id: newId,
+                   originalFileName: file.name,
+                   inputText: extractedText,
+                   scriptData: null,
+                   originalScriptData: null,
+                   editorHtml: '',
+                   externalVersion: 0,
+                   history: [],
+                   isDirty: false
+               });
+            }
         }
-
-        // Clean markdown asterisks
-        extractedText = extractedText.replace(/\*\*/g, '');
-
-        if (extractedText.length < 20) {
-            throw new Error("El archivo no contenía texto legible.");
+        
+        if (newDocs.length === 0) {
+            throw new Error("No se encontró texto legible en los archivos.");
         }
-            
-        setInputText(extractedText);
-        // Automáticamente procesarlo y generar el guion si viene de archivo
-        await processScriptText(extractedText);
+        
+        setDocs(prev => [...prev, ...newDocs]);
+        
+        let firstActiveId = activeDocId;
+        if (!activeDocId || files.length > 0) {
+            firstActiveId = newDocs[0].id;
+            setActiveDocId(newDocs[0].id);
+        }
+        
+        for (const doc of newDocs) {
+            await processScriptText(doc.inputText, doc.id);
+        }
         
         if (fileInputRef.current) {
             fileInputRef.current.value = '';
         }
-    } catch (err) {
+    } catch (err: any) {
         console.error("Error reading docx/doc:", err);
-        setError("Error al leer el archivo. Inténtelo de nuevo o use un .docx.");
+        setError(err.message || "Error al leer el archivo.");
     } finally {
         setIsProcessing(false);
     }
@@ -376,6 +490,10 @@ export default function App() {
             fileName += ` ${cleaned}`;
         }
     }
+
+    if (script.isMonologo) {
+        fileName = 'MONOLOGO ' + fileName;
+    }
     
     return `${fileName.replace(/\s+/g, ' ').trim()}.DOCX`;
   };
@@ -399,6 +517,51 @@ export default function App() {
     } catch (err: any) {
       console.error("Error creating docx:", err);
       setError("Error al crear el archivo Word.");
+    }
+  };
+
+  const handleDownloadAll = async () => {
+    if (docs.length === 0) return;
+    
+    setIsProcessing(true);
+    
+    try {
+      if (docs.length === 1) {
+          // If only one, just download it directly
+          await handleDownload();
+          setIsProcessing(false);
+          return;
+      }
+
+      const zip = new JSZip();
+      
+      const namesUsed = new Set<string>();
+      
+      for (const doc of docs) {
+         if (!doc.editorHtml) continue;
+         const blob = await generateDocxFromHtml(doc.editorHtml, { fontSize, lineSpacing, paragraphSpacing });
+         const resolvedFileName = getFileName(doc.scriptData);
+         
+         let uniqueName = resolvedFileName;
+         let counter = 1;
+         const baseNameNoExt = resolvedFileName.replace(/\.DOCX$/i, '').trim();
+         
+         while (namesUsed.has(uniqueName.toUpperCase())) {
+             uniqueName = `${baseNameNoExt} (${counter++}).DOCX`;
+         }
+         
+         namesUsed.add(uniqueName.toUpperCase());
+         zip.file(uniqueName, blob);
+      }
+      
+      const content = await zip.generateAsync({ type: 'blob' });
+      saveAs(content, 'Guiones_Formateados.zip');
+      
+    } catch (err) {
+      console.error("Error creating zip:", err);
+      setError("Error al crear el archivo ZIP.");
+    } finally {
+      setIsProcessing(false);
     }
   };
 
@@ -486,6 +649,7 @@ export default function App() {
 
        const newHtml = editorHtml.replace(regex, rep);
        setEditorHtml(newHtml);
+       setExternalVersion(externalVersion + 1);
        
        setReplaceModal({ active: false, text: "", replaceWidth: "", isPattern: false });
        setIsDirty(true);
@@ -551,6 +715,16 @@ export default function App() {
                       <Download className="w-3 h-3 sm:mr-1 shrink-0" />
                       <span className="hidden sm:inline">DESCARGAR</span>
                     </button>
+                    {docs.length > 1 && (
+                      <button 
+                        onClick={() => requireSaveBeforeAction(handleDownloadAll)}
+                        className="bg-indigo-800 hover:bg-indigo-900 text-white px-3 py-1.5 rounded font-bold text-[10px] sm:text-xs flex items-center justify-center shadow-sm transition-colors"
+                        title="Descargar TODOS los DOCX (ZIP)"
+                      >
+                        <Download className="w-3 h-3 sm:mr-1 shrink-0" />
+                        <span className="hidden sm:inline">TODOS (ZIP)</span>
+                      </button>
+                    )}
                     <button 
                       onClick={() => requireSaveBeforeAction(() => window.print())}
                       className="bg-slate-800 hover:bg-slate-900 text-white px-3 py-1.5 rounded font-bold text-[10px] sm:text-xs flex items-center justify-center shadow-sm transition-colors"
@@ -598,10 +772,16 @@ export default function App() {
           >
              Vista Previa
           </button>
+          <button 
+             className={`flex-1 py-3 text-xs font-bold uppercase rounded transition-all ${activeTab === 'docs' ? 'bg-indigo-600 text-white shadow-md' : 'bg-slate-100 text-slate-500'}`}
+             onClick={() => setActiveTab('docs')}
+          >
+             Documentos
+          </button>
         </div>
 
         {/* Input Area */}
-        <section className={`w-full md:w-1/3 md:min-w-[320px] md:max-w-[450px] border-b md:border-b-0 md:border-r border-slate-300 bg-slate-50 flex-col z-10 overflow-hidden ${activeTab === 'input' ? 'flex' : 'hidden md:flex'}`}>
+        <section className={`w-full md:w-[28%] md:min-w-[280px] md:max-w-[360px] border-b md:border-b-0 md:border-r border-slate-300 bg-slate-50 flex-col z-10 overflow-hidden ${activeTab === 'input' ? 'flex' : 'hidden md:flex'}`}>
           <div className="p-4 border-b border-slate-200 bg-slate-100 flex justify-between items-center shrink-0">
             <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">Entrada & Configuración</span>
           </div>
@@ -612,7 +792,8 @@ export default function App() {
                 <div className="w-full">
                     <input 
                       type="file" 
-                      accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" 
+                      multiple
+                      accept=".docx,.txt,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" 
                       ref={fileInputRef}
                       onChange={handleFileUpload} 
                       className="hidden" 
@@ -623,7 +804,7 @@ export default function App() {
                       className="cursor-pointer w-full bg-white border border-dashed border-indigo-200 hover:border-indigo-400 hover:bg-white text-slate-600 px-4 py-8 rounded-xl text-[10px] font-bold uppercase tracking-wider flex flex-col items-center justify-center transition-all shadow-sm group"
                     >
                       <Upload className="w-8 h-8 mb-3 text-indigo-500 group-hover:scale-110 transition-transform" />
-                      <span>Cargar Documento (.docx)</span>
+                      <span className="text-center">Cargar Documentos<br/>(.docx, .txt)</span>
                     </label>
                 </div>
             </div>
@@ -662,6 +843,53 @@ export default function App() {
                     <Settings className="w-4 h-4 text-indigo-500" />
                     <span className="text-[10px] font-bold uppercase tracking-widest">Ajustes de Edición</span>
                 </div>
+                
+                <div className="space-y-1 mb-4">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-2">Formato de Guion</label>
+                    <div className="flex flex-wrap gap-4 text-sm text-slate-700">
+                        <label className="flex items-center space-x-2 cursor-pointer">
+                            <input 
+                                type="radio" 
+                                name="formatMode" 
+                                value="all" 
+                                checked={formatMode === 'all'}
+                                onChange={() => {
+                                    setFormatMode('all');
+                                    // if (inputText) setTimeout(() => processScriptText(inputText), 0);
+                                }}
+                                className="text-indigo-600 focus:ring-indigo-500"
+                            />
+                            <span>Todos los cambios</span>
+                        </label>
+                        <label className="flex items-center space-x-2 cursor-pointer">
+                            <input 
+                                type="radio" 
+                                name="formatMode" 
+                                value="numbering" 
+                                checked={formatMode === 'numbering'}
+                                onChange={() => {
+                                    setFormatMode('numbering');
+                                }}
+                                className="text-indigo-600 focus:ring-indigo-500"
+                            />
+                            <span>Numeración</span>
+                        </label>
+                        <label className="flex items-center space-x-2 cursor-pointer">
+                            <input 
+                                type="radio" 
+                                name="formatMode" 
+                                value="credits" 
+                                checked={formatMode === 'credits'}
+                                onChange={() => {
+                                    setFormatMode('credits');
+                                }}
+                                className="text-indigo-600 focus:ring-indigo-500"
+                            />
+                            <span>Créditos</span>
+                        </label>
+                    </div>
+                </div>
+
                 <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1">
                         <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Tamaño Letra</label>
@@ -793,14 +1021,16 @@ export default function App() {
               }
             }}
           >
-            {editorHtml ? (
+            {(originalScriptData || editorHtml !== '') ? (
                 /* The "Paper" - Carta (Letter) Size: 21.59cm x 27.94cm. Using flex-col and h-auto to ensure background covers all text. */
                 <div 
                   className="w-full max-w-[21.59cm] min-h-[27.94cm] h-auto bg-white shadow-xl relative mb-12 flex flex-col shrink-0" 
                 >
                      <EditorBlock 
+                        key={activeDocId || 'none'}
                         className="p-8 sm:p-[1.5cm] sm:pt-[2cm] sm:pb-[2.5cm] flex-1 min-h-full block w-full outline-none focus:outline-none focus:ring-0"
                         html={editorHtml}
+                        externalVersion={externalVersion}
                         onChange={(html) => {
                              setEditorHtml(html);
                              setIsDirty(true);
@@ -823,6 +1053,97 @@ export default function App() {
                 </div>
             )}
           </div>
+        </section>
+
+        {/* Document List Sidebar */}
+        <section className={`w-full md:w-[22%] md:min-w-[240px] md:max-w-[300px] border-l border-slate-300 bg-slate-50 flex-col z-10 overflow-hidden ${activeTab === 'docs' ? 'flex' : 'hidden md:flex'}`}>
+            <div className="p-4 border-b border-slate-200 bg-slate-100 flex justify-between items-center shrink-0">
+                <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">Documentos ({docs.length})</span>
+            </div>
+            <div className="flex-1 overflow-y-auto p-2 flex flex-col gap-2">
+                {docs.length === 0 ? (
+                    <div className="text-center text-slate-400 p-4 text-xs font-medium border border-dashed border-slate-300 rounded-lg m-2">
+                        No hay documentos cargados.
+                    </div>
+                ) : docs.map(doc => {
+                    const isDocx = doc.originalFileName.toLowerCase().endsWith('.docx') || doc.originalFileName.toLowerCase().endsWith('.doc');
+                    return (
+                        <div 
+                            key={doc.id}
+                            onClick={() => { setActiveDocId(doc.id); if (window.innerWidth < 768) setActiveTab('preview'); }}
+                            className={`p-3 rounded-lg border cursor-pointer transition-all flex items-center gap-3 relative overflow-hidden group ${activeDocId === doc.id ? 'bg-indigo-50 border-indigo-300 shadow-sm' : 'bg-white border-slate-200 hover:border-indigo-200 hover:bg-slate-50'}`}
+                        >
+                            <div className={`p-2 rounded shrink-0 ${activeDocId === doc.id ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-100 text-slate-500'}`}>
+                                <FileText className="w-5 h-5" />
+                            </div>
+                                <div className="flex-1 min-w-0 pr-6">
+                                    <p className={`text-xs font-bold truncate ${activeDocId === doc.id ? 'text-indigo-900' : 'text-slate-700'}`}>
+                                        {doc.originalFileName}
+                                    </p>
+                                    <p className="text-[10px] text-slate-500 truncate mt-0.5">
+                                        {isDocx ? 'Documento Word' : 'Archivo de Texto'}
+                                    </p>
+                                </div>
+                                <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                                    <button 
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            setDocs(prev => prev.filter(d => d.id !== doc.id));
+                                            if (activeDocId === doc.id) setActiveDocId(null);
+                                        }}
+                                        className="p-1.5 text-slate-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
+                                        title="Eliminar documento"
+                                    >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                    {activeDocId === doc.id && (
+                                        <CheckCircle2 className="w-4 h-4 text-indigo-600 shrink-0 bg-white rounded-full" />
+                                    )}
+                                    {doc.isDirty && activeDocId !== doc.id && (
+                                        <div className="w-2 h-2 rounded-full bg-orange-400"></div>
+                                    )}
+                                </div>
+                        </div>
+                    );
+                })}
+            </div>
+            
+            {docs.length > 0 && (
+                <div className="p-3 border-t border-slate-200 bg-white flex flex-col gap-2 shrink-0">
+                    <div className="flex gap-2">
+                         <button 
+                            onClick={handleExportBackup}
+                            className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 py-2 rounded-lg text-[10px] font-bold flex items-center justify-center transition-colors border border-slate-200"
+                        >
+                            <Download className="w-3 h-3 mr-1" /> RESPALDO
+                        </button>
+                        <label className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 py-2 rounded-lg text-[10px] font-bold flex items-center justify-center transition-colors border border-slate-200 cursor-pointer">
+                            <Upload className="w-3 h-3 mr-1" /> CARGAR
+                            <input type="file" accept=".json" onChange={handleImportBackup} className="hidden" />
+                        </label>
+                    </div>
+                    <button 
+                        onClick={() => {
+                            if (isClearingStock) {
+                                setDocs([]);
+                                setActiveDocId(null);
+                                setIsClearingStock(false);
+                            } else {
+                                setIsClearingStock(true);
+                                setTimeout(() => setIsClearingStock(false), 3000);
+                            }
+                        }}
+                        className={`w-full py-2 rounded-lg text-[10px] font-bold flex items-center justify-center transition-all border ${
+                            isClearingStock 
+                            ? 'bg-red-600 text-white border-red-700 animate-pulse' 
+                            : 'bg-slate-50 hover:bg-red-50 hover:text-red-600 text-slate-400 border-slate-100 hover:border-red-200'
+                        }`}
+                    >
+                        <Trash2 className="w-3.5 h-3.5 mr-1.5" /> 
+                        {isClearingStock ? '¿ESTÁS SEGURO? CLIC DE NUEVO' : 'LIMPIAR STOCK'}
+                    </button>
+                </div>
+            )}
         </section>
       </main>
 

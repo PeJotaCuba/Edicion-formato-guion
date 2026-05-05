@@ -38,7 +38,7 @@ function formatTextForVoice(text: string): string {
     return res;
 }
 
-export function normalizeScriptNumbering(script: RadioScript): RadioScript {
+export function normalizeScriptNumbering(script: RadioScript, formatMode: 'all' | 'numbering' | 'credits' = 'all'): RadioScript {
     let soundCounter = 1;
     let speakerCounter = 1;
 
@@ -115,9 +115,13 @@ export function normalizeScriptNumbering(script: RadioScript): RadioScript {
     
     mergedBody.forEach(item => {
         if (item.type === 'sound') {
-            const romanId = numberToRoman(soundCounter);
-            soundCounter++;
-            normalizedBody.push({ ...item, identifier: romanId });
+            if (formatMode === 'all' || formatMode === 'numbering') {
+                const romanId = numberToRoman(soundCounter);
+                soundCounter++;
+                normalizedBody.push({ ...item, identifier: romanId });
+            } else {
+                normalizedBody.push({ ...item });
+            }
         } else if (item.type === 'speaker') {
             const originalId = (item.identifier || '').trim();
             const rawName = (item.speakerName || 'LOCUTOR').trim();
@@ -155,22 +159,24 @@ export function normalizeScriptNumbering(script: RadioScript): RadioScript {
                 return;
             }
 
-            if (shouldNumber) {
-                const arabicId = speakerCounter.toString().padStart(2, '0');
-                speakerCounter++;
-                normalizedBody.push({
-                    ...item,
-                    identifier: arabicId,
-                    speakerName: cleanName
-                });
+            if (formatMode === 'all' || formatMode === 'numbering') {
+                if (shouldNumber) {
+                    const arabicId = speakerCounter.toString().padStart(2, '0');
+                    speakerCounter++;
+                    normalizedBody.push({
+                        ...item,
+                        identifier: arabicId,
+                        speakerName: cleanName
+                    });
+                } else {
+                    normalizedBody.push({
+                        ...item,
+                        identifier: '',
+                        speakerName: cleanName
+                    });
+                }
             } else {
-                // It's a character but shouldn't be numbered (e.g. DUO without original ID)
-                // We keep it as speaker to have the bold/caps prefix but without the number
-                normalizedBody.push({
-                    ...item,
-                    identifier: '',
-                    speakerName: cleanName
-                });
+                 normalizedBody.push({ ...item, speakerName: cleanName });
             }
         } else {
             normalizedBody.push(item);
@@ -178,8 +184,11 @@ export function normalizeScriptNumbering(script: RadioScript): RadioScript {
     });
 
     // 3. Final return
+    const finalCredits = formatMode === 'numbering' ? (script.rawCredits || script.credits) : script.credits;
+
     return {
         ...script,
+        credits: finalCredits,
         body: normalizedBody
     };
 }
