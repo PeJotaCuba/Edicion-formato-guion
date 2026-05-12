@@ -85,35 +85,40 @@ export function normalizeScriptNumbering(script: RadioScript, formatMode: 'all' 
         });
     }
 
-    // Merge consecutive speakers BEFORE second pass
-    const mergedBody: ScriptItem[] = [];
-    script.body.forEach(item => {
-        // Format text nodes within item
-        const formattedItem = { ...item };
-        if (formattedItem.text && formattedItem.text.length > 0) {
-           formattedItem.text = formattedItem.text.map(t => formatTextForVoice(t));
-        }
+    // Prepare body for processing based on formatMode
+    let bodyToProcess = script.body;
 
-        if (mergedBody.length > 0) {
-            const lastItem = mergedBody[mergedBody.length - 1];
-            if (lastItem.type === 'speaker' && formattedItem.type === 'speaker') {
-                const lastCleanName = (lastItem.speakerName || '').toUpperCase().trim();
-                const currCleanName = (formattedItem.speakerName || '').toUpperCase().trim();
-                
-                if (lastCleanName === currCleanName && !isMetadata(lastCleanName)) {
-                    // Merge!
-                    lastItem.text = lastItem.text.concat(formattedItem.text);
-                    return; // Skip adding the current item as a new block
+    if (formatMode === 'all' || formatMode === 'numbering') {
+        const mergedBody: ScriptItem[] = [];
+        script.body.forEach(item => {
+            // Format text nodes within item only if we are in numbering or all mode
+            const formattedItem = { ...item };
+            if (formattedItem.text && formattedItem.text.length > 0) {
+               formattedItem.text = formattedItem.text.map(t => formatTextForVoice(t));
+            }
+
+            if (mergedBody.length > 0) {
+                const lastItem = mergedBody[mergedBody.length - 1];
+                if (lastItem.type === 'speaker' && formattedItem.type === 'speaker') {
+                    const lastCleanName = (lastItem.speakerName || '').toUpperCase().trim();
+                    const currCleanName = (formattedItem.speakerName || '').toUpperCase().trim();
+                    
+                    if (lastCleanName === currCleanName && !isMetadata(lastCleanName)) {
+                        // Merge!
+                        lastItem.text = lastItem.text.concat(formattedItem.text);
+                        return; // Skip adding the current item as a new block
+                    }
                 }
             }
-        }
-        mergedBody.push(formattedItem);
-    });
+            mergedBody.push(formattedItem);
+        });
+        bodyToProcess = mergedBody;
+    }
 
     // Second pass: Perform normalization
     const normalizedBody: ScriptItem[] = [];
     
-    mergedBody.forEach(item => {
+    bodyToProcess.forEach(item => {
         if (item.type === 'sound') {
             if (formatMode === 'all' || formatMode === 'numbering') {
                 const romanId = numberToRoman(soundCounter);
@@ -137,9 +142,21 @@ export function normalizeScriptNumbering(script: RadioScript, formatMode: 'all' 
             }
 
             // Rule B: Strict numbering policy
-            const isLoc = cleanName.startsWith('LOC');
+            const isLoc = cleanName.startsWith('LOC') || cleanName.startsWith('PERIODISTA') || cleanName.startsWith('ANIMADOR') || cleanName.startsWith('LEC');
             const hadId = originalId !== '' && !isNaN(Number(originalId));
-            const shouldNumber = isLoc || hadId;
+            
+            // Collect names that have an ID somewhere in the document to ensure consistent numbering
+            const wasNumberedElsewhere = script.body.some(b => 
+                b.type === 'speaker' && 
+                (b.identifier || '').trim() !== '' && 
+                !isNaN(Number((b.identifier || '').trim())) &&
+                (b.speakerName || '').toUpperCase().replace(/[:\.\s]+$/, '') === cleanName
+            );
+
+            // Solo enumerar roles conocidos, o aquellos que hayan venido con número de alguna forma
+            const shouldNumber = (formatMode === 'all' || formatMode === 'numbering') 
+                ? (isLoc || hadId || wasNumberedElsewhere) 
+                : (isLoc || hadId);
 
             // Si es un "falso locutor" (frases como "HACEMOS UNA PAUSA", "ESCUCHEMOS", "NO OLVIDES"), 
             // lo convertimos a texto normal para evitar negritas/mayúsculas innecesarias.

@@ -232,7 +232,7 @@ export async function generateDocxFromHtml(htmlString: string, settings: DocxSet
             } else {
                 // If the user deleted the wrappers, fallback to parsing paragraphs
                 const isHanging = el.style.textIndent === '-2cm' || el.style.textIndent.includes('-');
-                const padLeft = el.style.paddingLeft === '2cm' || el.style.paddingLeft.includes('2');
+                const padLeft = el.style.paddingLeft === '2cm' || el.style.paddingLeft.includes('2') || el.style.marginLeft === '2cm' || el.style.marginLeft.includes('2');
                 children.push(new Paragraph({
                     indent: padLeft ? { left: TWIPS_2CM, hanging: isHanging ? TWIPS_2CM : 0 } : undefined,
                     children: parseHtmlToTextRuns(el.innerHTML),
@@ -248,7 +248,7 @@ export async function generateDocxFromHtml(htmlString: string, settings: DocxSet
              if (el.nodeType === Node.ELEMENT_NODE) {
                 const htmlEl = el as HTMLElement;
                 const isHanging = htmlEl.style.textIndent === '-2cm' || htmlEl.style.textIndent.includes('-');
-                const padLeft = htmlEl.style.paddingLeft === '2cm' || htmlEl.style.paddingLeft.includes('2');
+                const padLeft = htmlEl.style.paddingLeft === '2cm' || htmlEl.style.paddingLeft.includes('2') || htmlEl.style.marginLeft === '2cm' || htmlEl.style.marginLeft.includes('2');
                 children.push(new Paragraph({
                     indent: padLeft ? { left: TWIPS_2CM, hanging: isHanging ? TWIPS_2CM : 0 } : undefined,
                     children: parseHtmlToTextRuns(htmlEl.innerHTML),

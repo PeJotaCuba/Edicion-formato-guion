@@ -33,65 +33,87 @@ function replaceMarkdownBold(text: string): string {
 
 function scriptDataToHtml(script: RadioScript, formatMode: 'all' | 'numbering' | 'credits' = 'all'): string {
    let html = '<div id="script-credits" style="margin-bottom: 24px; padding-bottom: 24px; border-bottom: 1px solid #f1f5f9;">';
-   script.credits.forEach(c => {
-      let creditLabel = c.label;
-      if (formatMode === 'all' || formatMode === 'credits') {
-          if (creditLabel === 'REALIZADOR DE SONIDO' || creditLabel === 'REALIZADOR(A) DE SONIDO') {
-             const nameParts = c.value.split(':');
-             let name = nameParts.length > 1 ? nameParts[1].trim().toUpperCase() : c.value.trim().toUpperCase();
-             if (!name && nameParts.length === 1) name = nameParts[0].trim().toUpperCase();
-             
-             const isFemale = /\b(MARIA|MARÍA|ANA|LAURA|CARMEN|SOFIA|SOFÍA|JULIA|PAULA|ANDREA|DIANA|MARTA|PATRICIA|ELENA|LUCIA|LUCÍA|CARLA|SARA|ISABEL|BEATRIZ)\b/.test(name);
-             const isMale = /\b(JOSE|JOSÉ|JUAN|CARLOS|LUIS|MANUEL|DAVID|JORGE|PABLO|RAUL|RAÚL|PEDRO|ALEJANDRO|DIEGO|MIGUEL|FRANCISCO|JAVIER)\b/.test(name);
-             
-             if (isFemale) creditLabel = 'REALIZADORA DE SONIDO';
-             else if (isMale) creditLabel = 'REALIZADOR DE SONIDO';
-             else creditLabel = 'REALIZADOR (A) DE SONIDO';
+   
+   if (formatMode === 'all' || formatMode === 'credits') {
+       script.credits.forEach(c => {
+          let creditLabel = c.label;
+          const val = replaceMarkdownBold(c.value);
+          if (val && !val.includes('____')) {
+             html += `<div style="line-height: normal;"><b>${creditLabel}: </b>${val}</div>`;
+          } else {
+             html += `<div style="line-height: normal;"><b>${creditLabel}: </b></div>`;
           }
-      }
-      
-      const val = replaceMarkdownBold(c.value);
-      html += `<div style="line-height: normal;"><b>${creditLabel}: </b>${val}</div>`;
-   });
+       });
+   } else {
+       (script.rawCredits || []).forEach(c => {
+          html += `<div>${c.label ? c.label + ': ' : ''}${c.value}</div>`;
+       });
+   }
+   
    html += '</div><div id="script-body">';
-   script.body.forEach(item => {
-      if (item.type === 'speaker') {
-         const paragraphs = item.text || [];
-         paragraphs.forEach((p, idx) => {
-            const isFirst = idx === 0;
-            const indentStyle = isFirst ? '-2cm' : '0';
-            let bHtml = `<div style="padding-left: 2cm; text-indent: ${indentStyle};">`;
-            if (isFirst) {
-                const prefixId = item.identifier ? `${item.identifier} ` : '';
-                bHtml += `<b>${prefixId}${item.speakerName || 'LOCUTOR'}:</b> `;
-                if (item.intention) {
-                    bHtml += `<b>(${item.intention})</b> `;
+
+   if (formatMode === 'credits') {
+       // Si solo se quieren los créditos con formato, el resto del guion queda intacto sin márgenes ni números adicionales.
+       script.body.forEach(item => {
+          const paragraphs = item.text || [];
+          paragraphs.forEach((p, idx) => {
+              const val = replaceMarkdownBold(p);
+              
+              if (idx === 0) {
+                 if (item.type === 'speaker') {
+                     const prefixId = item.identifier ? `${item.identifier} ` : '';
+                     html += `<div>${prefixId}${item.speakerName || 'LOCUTOR'}: ${item.intention ? `(${item.intention}) ` : ''}${val}</div>`;
+                 } else if (item.type === 'sound') {
+                     const prefixId = item.identifier ? `${item.identifier} ` : '';
+                     html += `<div>${prefixId}SON: ${val}</div>`;
+                 } else {
+                     html += `<div>${val}</div>`;
+                 }
+              } else {
+                  html += `<div>${val}</div>`;
+              }
+          });
+       });
+   } else {
+       script.body.forEach(item => {
+          if (item.type === 'speaker') {
+             const paragraphs = item.text || [];
+             paragraphs.forEach((p, idx) => {
+                const isFirst = idx === 0;
+                const indentStyle = isFirst ? '-2cm' : '0';
+                let bHtml = `<div style="margin-left: 2cm; text-indent: ${indentStyle};">`;
+                if (isFirst) {
+                    const prefixId = item.identifier ? `${item.identifier} ` : '';
+                    bHtml += `<b>${prefixId}${item.speakerName || 'LOCUTOR'}:</b> `;
+                    if (item.intention) {
+                        bHtml += `<b>(${item.intention})</b> `;
+                    }
                 }
-            }
-            bHtml += `${replaceMarkdownBold(p)}</div>`;
-            html += bHtml;
-         });
-      } else if (item.type === 'sound') {
-         const paragraphs = item.text || [];
-         paragraphs.forEach((p, idx) => {
-             const isFirst = idx === 0;
-             let cleanText = replaceMarkdownBold(p);
-             const indentStyle = isFirst ? '-2cm' : '0';
-             let bHtml = `<div style="padding-left: 2cm; text-indent: ${indentStyle};">`;
-             if (isFirst) {
-                 cleanText = cleanText.replace(/^(?:SON|OP)\s*:?\s*/i, '').trim();
-                 bHtml += `<b>${item.identifier} SON:</b> `;
-             }
-             bHtml += `<b><u>${cleanText.toUpperCase().replace(/<B>/g, '').replace(/<\/B>/g, '')}</u></b></div>`;
-             html += bHtml;
-         });
-      } else {
-         const paragraphs = item.text || [];
-         paragraphs.forEach(p => {
-             html += `<div style="padding-left: 2cm;">${replaceMarkdownBold(p)}</div>`;
-         });
-      }
-   });
+                bHtml += `${replaceMarkdownBold(p)}</div>`;
+                html += bHtml;
+             });
+          } else if (item.type === 'sound') {
+             const paragraphs = item.text || [];
+             paragraphs.forEach((p, idx) => {
+                 const isFirst = idx === 0;
+                 let cleanText = replaceMarkdownBold(p);
+                 const indentStyle = isFirst ? '-2cm' : '0';
+                 let bHtml = `<div style="margin-left: 2cm; text-indent: ${indentStyle};">`;
+                 if (isFirst) {
+                     cleanText = cleanText.replace(/^(?:SON|OP)\s*:?\s*/i, '').trim();
+                     bHtml += `<b>${item.identifier} SON:</b> `;
+                 }
+                 bHtml += `<b><u>${cleanText}</u></b></div>`;
+                 html += bHtml;
+             });
+          } else {
+             const paragraphs = item.text || [];
+             paragraphs.forEach(p => {
+                 html += `<div style="margin-left: 2cm;">${replaceMarkdownBold(p)}</div>`;
+             });
+          }
+       });
+   }
    html += '</div>';
    return html;
 }

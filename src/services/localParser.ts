@@ -1,27 +1,34 @@
 import { RadioScript } from '../types';
 
 export function parseScriptLocally(inputText: string): RadioScript | null {
+    // Proteger negritas markdown convirtiendolas a tags html para que sobrevivan a replace(/\*/g, '')
+    let htmlContext = inputText;
+    htmlContext = htmlContext.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    htmlContext = htmlContext.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+
     // Dividir por líneas y descartar vacías
-    const paragraphs = inputText.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+    const paragraphs = htmlContext.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
     
     // Detect if it starts with "MONOLOGO"
     let isMonologo = false;
     if (paragraphs.length > 0) {
-        const firstPFlat = paragraphs[0].replace(/<[^>]+>/g, '').trim().toUpperCase();
+        const firstPFlat = paragraphs[0].replace(/<[^>]+>/g, '').replace(/\*/g, '').trim().toUpperCase();
         if (firstPFlat.startsWith('MONOLOGO') || firstPFlat.startsWith('MONÓLOGO')) {
             isMonologo = true;
         }
     }
     
     // First pass: Identify dynamic speaker names that are numbered explicitly or known
-    const knownSpeakers = new Set<string>(['LOC', 'LOCUTOR', 'LOCUTORA', 'PERIODISTA', 'ANIMADOR', 'ANIMADORA']);
+    const knownSpeakers = new Set<string>(['LOC', 'LEC', 'LOCUTOR', 'LOCUTORA', 'PERIODISTA', 'ANIMADOR', 'ANIMADORA', 'CAN', 'AMBOS', 'DUO', 'TRÍO']);
     for (const p of paragraphs) {
-        const flatP = p.replace(/<[^>]+>/g, '');
+        const flatP = p.replace(/<[^>]+>/g, '').replace(/\*/g, '');
         // En primer lugar intentamos atrapar los que tienen formato con dos puntos
-        const docNameMatch = flatP.match(/^[\(]?(\d+)[\)]?[\s.-]*([^:.]+)[.:]+\s*(.*)$/i);
+        const docNameMatch = flatP.match(/^[\(]?(\d*)[\)]?[\s.-]*([^:.]+)[.:]+\s*(.*)$/i);
         if (docNameMatch) {
             const name = docNameMatch[2].trim().toUpperCase();
-            if (name.length < 25) {
+            const onlyDigits = /^\d+$/.test(name);
+            const isBlacklisted = /^(OPCIONES|RESPUESTA|NOTA|PREGUNTA|ATENCIÓN|OJO|SUGERENCIA)$/i.test(name);
+            if (name.length > 1 && name.length < 25 && !/^(SON|SONIDO|OP|EFECTO|MÚSICA)$/i.test(name) && !onlyDigits && !isBlacklisted) {
                 knownSpeakers.add(name);
             }
         } else {
@@ -47,10 +54,18 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
     const getOriginalIndex = (original: string, flatIndex: number): number => {
         let flatCount = 0;
         let originalIdx = 0;
-        while (originalIdx < original.length && flatCount < flatIndex) {
+        // Trim leading spaces conceptually for the matching offset (since flatP is trimmed)
+        const trimmedOriginal = original.replace(/<[^>]+>/g, '').replace(/\*/g, '');
+        const leadingSpacesCount = trimmedOriginal.length - trimmedOriginal.trimStart().length;
+        
+        let targetFlatCount = flatIndex + leadingSpacesCount;
+
+        while (originalIdx < original.length && flatCount < targetFlatCount) {
             if (original[originalIdx] === '<') {
                 while (originalIdx < original.length && original[originalIdx] !== '>') originalIdx++;
                 originalIdx++;
+            } else if (original[originalIdx] === '*') {
+                originalIdx++; // Asterisks are removed in flatP, so they don't count towards flatCount
             } else {
                 flatCount++;
                 originalIdx++;
@@ -61,7 +76,7 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
     
     for (const p of paragraphs) {
         // Omitir números de página sueltos
-        const flatP = p.replace(/<[^>]+>/g, '');
+        const flatP = p.replace(/<[^>]+>/g, '').replace(/\*/g, '').trim();
         if (/^(?:P\u00e1gina|Page\s*)?\d+$/i.test(flatP)) {
             continue;
         }
@@ -133,21 +148,35 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
         let textExtracted = "";
 
         // Attempt format 1: explicitly has colon/dot acting as separator for a short name
-        const colonMatch = flatP.match(/^[\(]?(\d*)[\)]?[\s.-]*([A-ZÁÉÍÓÚÑa-záéíóúñ0-9\s]{1,30})[.:]+\s*(?:\(([^)]+)\))?\s*(.*)$/i);
+        const colonMatch = flatP.match(/^[\(]?(\d*)[\)]?[\s.:-]*([A-ZÁÉÍÓÚÑa-záéíóúñ0-9\s]{1,30})[.:]+\s*(?:\(([^)]+)\))?\s*(.*)$/i);
         if (colonMatch) {
-            id = colonMatch[1];
             let originalNamePart = colonMatch[2].trim();
-            name = originalNamePart.toUpperCase();
-            intention = colonMatch[3] ? colonMatch[3].trim().toUpperCase() : "";
-            isSpeaker = true;
-            speakerOriginalName = originalNamePart;
+            let tempName = originalNamePart.toUpperCase();
+            const onlyDigits = /^\d+$/.test(tempName);
+            const isBlacklisted = /^(OPCIONES|RESPUESTA|NOTA|PREGUNTA|ATENCIÓN|OJO|SUGERENCIA)$/i.test(tempName);
+            const hasId = !!colonMatch[1];
+            const isAllUpper = tempName === originalNamePart;
+            const isKnown = knownSpeakers.has(tempName);
             
-            const headerLength = flatP.length - (colonMatch[4] ? colonMatch[4].length : 0);
-            const originalOffset = getOriginalIndex(p, headerLength);
-            textExtracted = p.substring(originalOffset).trim();
-        } else {
+            // Un speaker válido:
+            // 1. Debe tener más de 1 letra de longitud. No ser solo dígitos. No ser una palabra en la lista negra.
+            // 2. Además, si no tiene número de ID y no es un speaker conocido, exigimos que esté en mayúsculas sostenidas para evitar cazar "Nosotros:" o "Y:"
+            if (tempName.length > 1 && !onlyDigits && !isBlacklisted && (hasId || isKnown || isAllUpper)) {
+                id = colonMatch[1];
+                name = tempName;
+                intention = colonMatch[3] ? colonMatch[3].trim().toUpperCase() : "";
+                isSpeaker = true;
+                speakerOriginalName = originalNamePart;
+                
+                const headerLength = flatP.length - (colonMatch[4] ? colonMatch[4].length : 0);
+                const originalOffset = getOriginalIndex(p, headerLength);
+                textExtracted = p.substring(originalOffset).trim();
+            }
+        }
+        
+        if (!isSpeaker) {
             // Attempt format 2: No colon, but explicit number + known speaker OR intention OR uppercase short name
-            const noColonMatch = flatP.match(/^[\(]?(\d+)[\)]?[\s.-]*([A-ZÁÉÍÓÚÑa-záéíóúñ\s]{2,40})\b\s*(?:\(([^)]+)\))?\s*(.*)$/i);
+            const noColonMatch = flatP.match(/^[\(]?(\d+)[\)]?[\s.:-]*([A-ZÁÉÍÓÚÑa-záéíóúñ0-9\s]{2,40})\b\s*(?:\(([^)]+)\))?\s*(.*)$/i);
             if (noColonMatch) {
                 let originalNamePart = noColonMatch[2].trim();
                 let tempName = originalNamePart.toUpperCase();
@@ -155,9 +184,10 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
                 const isAllUpperCase = tempName === originalNamePart;
                 const hasIntention = !!noColonMatch[3];
                 const cleanWordsCount = tempName.split(' ').filter(w => w.length > 0).length;
+                const isBlacklisted = /^(OPCIONES|RESPUESTA|NOTA|PREGUNTA|ATENCIÓN|OJO|SUGERENCIA)$/i.test(tempName);
 
                 // Consider it a speaker if it's a known speaker, OR it has an intention like (REFLEXIVO), OR it's uppercase and short
-                if (knownSpeakers.has(tempName) || hasIntention || (isAllUpperCase && cleanWordsCount <= 4)) {
+                if (!isBlacklisted && (knownSpeakers.has(tempName) || hasIntention || (isAllUpperCase && cleanWordsCount <= 4))) {
                     id = noColonMatch[1];
                     name = tempName;
                     intention = noColonMatch[3] ? noColonMatch[3].trim().toUpperCase() : "";
@@ -170,7 +200,8 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
                 }
             } else {
                 // Attempt format 3: No number, no colon, but STARTS EXACTLY with a known speaker
-                const knownArray = Array.from(knownSpeakers).sort((a,b)=>b.length-a.length).join('|');
+                const escapeRegExp = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const knownArray = Array.from(knownSpeakers).sort((a,b)=>b.length-a.length).map(escapeRegExp).join('|');
                 if (knownArray.length > 0) {
                     const knownMatch = flatP.match(new RegExp(`^(${knownArray})\\b\\s*(?:\\(([^)]+)\\))?\\s*(.*)$`, 'i'));
                     if (knownMatch) {
@@ -190,14 +221,15 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
         }
         
         if (isSpeaker) {
-            const isCreditLabel = name.match(/^(EMISORA|PROGRAMA|EMISI[OÓ]N|FECHA|FECHA DE TRANSMISI[OÓ]N|FECHA DE GRABACI[OÓ]N|ESCRIBE|ESCRITOR|GUI[OÓ]N|GUION|ASESOR|ASESORA|DIRIGE|DIRECTOR|DIRECCI[OÓ]N|DIRECCI[OÓ]N GENERAL|REDACCI[OÓ]N|TEMA|REALIZADOR|REALIZADOR DE SONIDO|REALIZADOR DE SONIDOS|LOCUTOR|LOCUTORA|LOC|SECCI[OÓ]N|ACTOR|ACTRIZ|T[ÍI]TULO|FORMATO)$/);
+            const isCreditLabel = name.match(/^(EMISORA|PROGRAMA|EMISI[OÓ]N|FECHA|FECHA DE TRANSMISI[OÓ]N|FECHA DE GRABACI[OÓ]N|ESCRIBE|ESCRITOR|GUI[OÓ]N|GUION|ASESOR|ASESORA|DIRIGE|DIRECTOR|DIRECCI[OÓ]N(?: GENERAL)?|REDACCI[OÓ]N|TEMA|REALIZADOR(?:A)?(?:\s*\(A\))?(?:\s*DE\s*SONIDOS?)?|REALIZACI[OÓ]N\s*DE\s*SONIDO|LOCUTOR|LOCUTORA|LOCUCI[OÓ]N|LOC|SECCI[OÓ]N|ACTOR|ACTRIZ|T[ÍI]TULO|FORMATO)$/i);
             
             const isSpeakerRole = /^(LOCUTOR|LOCUTORA|LOC|ACTOR|ACTRIZ|ANIMADOR|ANIMADORA|PERIODISTA)$/i.test(name);
 
-            if (isCreditLabel && (!id || id.trim() === '')) {
+            if (isCreditLabel && (!id || id.trim() === '') && !intention) {
                 if (isSpeakerRole) {
-                    if (parsingCredits && textExtracted.length < 100) {
-                        // Si estamos en zona de créditos y el texto es corto, es un crédito (ej. LOCUTOR: Pedro)
+                    if (parsingCredits && textExtracted.length < 150) {
+                        // Si estamos en zona de créditos y el texto es largo, podría ser ya el guion si no hay otros créditos.
+                        // Pero usualmente los roles en créditos van con nombres reales.
                         isSpeaker = false;
                     }
                 } else {
@@ -235,7 +267,7 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
         // Matcher para créditos
         if (parsingCredits) {
             const creditMatch = flatP.match(/^([a-zA-ZÁÉÍÓÚáéíóúñÑ\s\(\)]+):\s*(.*)$/i);
-            const kwMatch = flatP.match(/^(EMISORA|PROGRAMA|EMISI[OÓ]N|FECHA(?: DE TRANSMISI[OÓ]N| DE GRABACI[OÓ]N)?|ESCRIBE|ESCRITOR|GUI[OÓ]N|GUION|ASESOR|ASESORA|DIRIGE|DIRECTOR|TEMA|REALIZADOR(?: DE SONIDO| DE SONIDOS)?|LOC(?:UTOR|UTORA)?|SECCI[OÓ]N|ACTOR|ACTRIZ|T[ÍI]TULO|FORMATO)\b[\s:.-]*(.*)$/i);
+            const kwMatch = flatP.match(/^(EMISORA|PROGRAMA|EMISI[OÓ]N|FECHA(?: DE TRANSMISI[OÓ]N| DE GRABACI[OÓ]N)?|ESCRIBE|ESCRITOR|GUI[OÓ]N|GUION|ASESOR|ASESORA|DIRIGE|DIRECTOR|DIRECCI[OÓ]N(?: GENERAL)?|TEMA|REALIZADOR(?:A)?(?:\s*\(A\))?(?:\s*DE\s*SONIDOS?)?|REALIZACI[OÓ]N\s*DE\s*SONIDO|LOC(?:UTOR|UTORA|UCI[OÓ]N)?|SECCI[OÓ]N|ACTOR|ACTRIZ|T[ÍI]TULO|FORMATO)\b[\s:.-]*(.*)$/i);
 
             if (kwMatch) {
                 // Get original value with tags
@@ -278,7 +310,7 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
         // Párrafo de continuación (si pertenece a la intervención anterior)
         if (!parsingCredits) {
             // Check if it's a misplaced credit label
-            const isCreditLabel = flatP.match(/^(EMISORA|PROGRAMA|EMISI[OÓ]N|FECHA(?: DE TRANSMISI[OÓ]N| DE GRABACI[OÓ]N)?|ESCRIBE|ESCRITOR|GUI[OÓ]N|GUION|ASESOR|ASESORA|DIRIGE|DIRECTOR|TEMA|REALIZADOR(?: DE SONIDO| DE SONIDOS)?|SECCI[OÓ]N|T[ÍI]TULO|FORMATO)\b[\s:.-]/i);
+            const isCreditLabel = flatP.match(/^(EMISORA|PROGRAMA|EMISI[OÓ]N|FECHA(?: DE TRANSMISI[OÓ]N| DE GRABACI[OÓ]N)?|ESCRIBE|ESCRITOR|GUI[OÓ]N|GUION|ASESOR|ASESORA|DIRIGE|DIRECTOR|DIRECCI[OÓ]N(?: GENERAL)?|TEMA|REALIZADOR(?:A)?(?:\s*\(A\))?(?:\s*DE\s*SONIDOS?)?|REALIZACI[OÓ]N\s*DE\s*SONIDO|LOC(?:UTOR|UTORA|UCI[OÓ]N)?|SECCI[OÓ]N|T[ÍI]TULO|FORMATO)\b[\s:.-]/i);
             
             if (isCreditLabel) {
                 continue;
@@ -300,7 +332,7 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
             if (credits.length > 0) {
                 credits[credits.length - 1].value += ' ' + p;
             } else if (p.trim().length > 0) {
-                const flatP = p.replace(/<[^>]+>/g, '').trim();
+                const flatP = p.replace(/<[^>]+>/g, '').replace(/\*/g, '').trim();
                 if (flatP.length < 50 && !flatP.includes(':') && /^(MON[OÓ]LOGO|REPORTAJE|ENTREVISTA|CR[OÓ]NICA|RADIOTEATRO|DOCUMENTAL)$/i.test(flatP)) {
                     credits.push({
                         label: 'FORMATO',
@@ -326,95 +358,35 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
     const seenLabels = new Set<string>();
 
     const templateOrder = [
-        'FORMATO',
         'EMISORA',
         'PROGRAMA',
-        'EMISIÓN', // Nuevo campo solicitado
-        'SECCIÓN',
-        'TÍTULO',
-        'ESCRIBE',
-        'ESCRITOR',
-        'ASESOR',
-        'ASESORA',
-        'DIRECTOR',
-        'DIRECCIÓN',
-        'DIRECCIÓN GENERAL',
-        'REDACCIÓN',
-        'REALIZADOR (A) DE SONIDO', // Formato con (A)
-        'LOCUTOR',
-        'LOCUTORA',
-        'ACTOR',
-        'ACTRIZ',
-        'FECHA DE TRANSMISIÓN',
-        'FECHA DE GRABACIÓN', // Nuevo campo solicitado
+        'EMISIÓN',
         'FECHA',
-        'TEMA'
+        'TEMA',
+        'ESCRIBE',
+        'ASESORA',
+        'DIRIGE',
+        'REALIZACIÓN DE SONIDO',
+        'LOCUCIÓN'
     ];
-
-    // Helper to detect gender from a name
-    const detectGender = (name: string): 'M' | 'F' | 'U' => {
-        const n = name.trim().toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-        if (!n) return 'U';
-        
-        // Use first word (first name) for cleaner detection
-        const firstName = n.split(/\s+/)[0];
-        
-        // common masculine names and endings
-        if (/^(LUIS|JOSE|JUAN|RAFAEL|PEDRO|CARLOS|MANUEL|ROBERTO|ALBERTO|DANIEL|JAVIER|VICENTE|RUBEN|ABEL|MIGUEL|EDUARDO|OSCAR|ANGEL|YUNIER|YANDY|YASSEL)$/.test(firstName)) return 'M';
-        if (firstName.endsWith('O') || firstName.endsWith('S') && !firstName.endsWith('AS')) {
-            if (/^(MARIA|INES|ANAYS|LOURDES|CARIDAD)$/.test(firstName)) return 'F';
-            return 'M';
-        }
-        
-        // common feminine names and endings
-        if (/^(MARIA|ANA|LAURA|CARIDAD|LISSELL|CARID|CARMEN|ROSA|ELENA|LUCIA|MARTA|SILVIA|BEATRIZ|INES)$/.test(firstName)) return 'F';
-        if (firstName.endsWith('A') || firstName.endsWith('AS')) {
-            if (/^(BATTISTA|GARCIA)$/.test(firstName)) return 'U'; // Just in case
-            return 'F';
-        }
-        
-        return 'U';
-    };
 
     // Helper to find and normalize labels
     const findAndNormalize = (label: string, value: string) => {
         let cleanLabel = label.toUpperCase().trim();
         let cleanValue = value.trim();
 
-        if (cleanLabel === 'LOC') {
-            cleanLabel = 'LOCUTOR';
-        }
-
-        // Gender adjustment for specific labels
-        if (['LOCUTOR', 'LOCUTORA', 'ASESOR', 'ASESORA', 'DIRECTOR', 'DIRECTORA', 'ESCRITOR', 'ESCRITORA'].includes(cleanLabel)) {
-            const gender = detectGender(cleanValue);
-            if (gender === 'M') {
-                if (cleanLabel.endsWith('ORA')) cleanLabel = cleanLabel.substring(0, cleanLabel.length - 1); // LOCUTORA -> LOCUTOR
-                else if (cleanLabel.endsWith('A')) cleanLabel = cleanLabel.substring(0, cleanLabel.length - 1); // ESCRITORA -> ESCRITOR
-            } else if (gender === 'F') {
-                if (cleanLabel.endsWith('OR') && !cleanLabel.endsWith('ORA')) cleanLabel = cleanLabel + 'A'; // LOCUTOR -> LOCUTORA
-                else if (cleanLabel === 'ESCRITOR') cleanLabel = 'ESCRITORA';
-            }
-        }
-
-        if (cleanLabel.includes('REALIZADOR') && cleanLabel.includes('SONIDO')) {
-            const gender = detectGender(cleanValue);
-            if (gender === 'M') {
-                 cleanLabel = 'REALIZADOR DE SONIDO';
-            } else if (gender === 'F') {
-                 cleanLabel = 'REALIZADORA DE SONIDO';
-            } else {
-                 cleanLabel = 'REALIZADOR (A) DE SONIDO';
-            }
-        } else if (cleanLabel === 'REALIZADOR' || cleanLabel === 'REALIZADOR DE SONIDOS') {
-            const gender = detectGender(cleanValue);
-            if (gender === 'M') {
-                 cleanLabel = 'REALIZADOR DE SONIDO';
-            } else if (gender === 'F') {
-                 cleanLabel = 'REALIZADORA DE SONIDO';
-            } else {
-                 cleanLabel = 'REALIZADOR (A) DE SONIDO';
-            }
+        if (/^(LOCUTOR|LOCUTORA|LOC|LOCUCI[OÓ]N)$/.test(cleanLabel)) {
+            cleanLabel = 'LOCUCIÓN';
+        } else if (/^(ESCRITOR|ESCRITORA|ESCRIBE|GUI[OÓ]N)$/.test(cleanLabel)) {
+            cleanLabel = 'ESCRIBE';
+        } else if (/^(ASESOR|ASESORA)$/.test(cleanLabel)) {
+            cleanLabel = 'ASESORA';
+        } else if (/^(DIRECTOR|DIRECTORA|DIRIGE|DIRECCI[OÓ]N|DIRECCI[OÓ]N GENERAL)$/.test(cleanLabel)) {
+            cleanLabel = 'DIRIGE';
+        } else if (/^(REALIZADOR|REALIZADORA|REALIZACI[OÓ]N)/.test(cleanLabel) || cleanLabel.includes('SONIDO')) {
+            cleanLabel = 'REALIZACIÓN DE SONIDO';
+        } else if (/^(FECHA DE TRANSMISI[OÓ]N|FECHA DE GRABACI[OÓ]N|FECHA)$/.test(cleanLabel)) {
+            cleanLabel = 'FECHA';
         }
 
         if (cleanLabel === 'EMISORA') {
@@ -438,10 +410,15 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
         }
     });
 
-    // Ensure core labels exist if they were missing (Optional, but user said "SI NO ESTA LO PONES SIEMPRE ARRIBA" for EMISORA)
-    if (!seenLabels.has('EMISORA')) {
-        normalizedCredits.unshift({ label: 'EMISORA', value: 'CMNL RADIO CIUDAD MONUMENTO' });
-    }
+    // Ensure all core labels exist exactly as templateOrder
+    templateOrder.forEach(label => {
+        if (!seenLabels.has(label)) {
+            let defaultVal = '';
+            if (label === 'EMISORA') defaultVal = 'CMNL RADIO CIUDAD MONUMENTO';
+            normalizedCredits.push({ label, value: defaultVal });
+            seenLabels.add(label);
+        }
+    });
 
     // Sort according to templateOrder
     normalizedCredits.sort((a, b) => {
