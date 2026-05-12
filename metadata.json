@@ -1,6 +1,6 @@
 {
   "name": "GuionFormat",
-  "description": "Transforma cualquier texto en un guion técnico de radio profesional en formato .docx utilizando inteligencia artificial avanzada (DeepSeek).",
+  "description": "Transforma cualquier texto en un guion técnico de radio profesional en formato .docx.",
   "requestFramePermissions": [],
   "majorCapabilities": []
 }

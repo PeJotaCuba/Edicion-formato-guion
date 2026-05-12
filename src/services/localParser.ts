@@ -128,7 +128,7 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
                 // Get original remaining text with tags
                 const headerLength = flatP.length - (soundMatch[3] ? soundMatch[3].length : 0);
                 const originalOffset = getOriginalIndex(p, headerLength);
-                let remainingText = p.substring(originalOffset).trim();
+                let remainingText = applyRadioTransformations(p.substring(originalOffset).trim());
                 
                 body.push({
                     type: 'sound',
@@ -170,7 +170,7 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
                 
                 const headerLength = flatP.length - (colonMatch[4] ? colonMatch[4].length : 0);
                 const originalOffset = getOriginalIndex(p, headerLength);
-                textExtracted = p.substring(originalOffset).trim();
+                textExtracted = applyRadioTransformations(p.substring(originalOffset).trim());
             }
         }
         
@@ -196,7 +196,7 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
                     
                     const headerLength = flatP.length - (noColonMatch[4] ? noColonMatch[4].length : 0);
                     const originalOffset = getOriginalIndex(p, headerLength);
-                    textExtracted = p.substring(originalOffset).trim();
+                    textExtracted = applyRadioTransformations(p.substring(originalOffset).trim());
                 }
             } else {
                 // Attempt format 3: No number, no colon, but STARTS EXACTLY with a known speaker
@@ -214,14 +214,14 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
                         
                         const headerLength = flatP.length - (knownMatch[3] ? knownMatch[3].length : 0);
                         const originalOffset = getOriginalIndex(p, headerLength);
-                        textExtracted = p.substring(originalOffset).trim();
+                        textExtracted = applyRadioTransformations(p.substring(originalOffset).trim());
                     }
                 }
             }
         }
         
         if (isSpeaker) {
-            const isCreditLabel = name.match(/^(EMISORA|PROGRAMA|EMISI[OÓ]N|FECHA|FECHA DE TRANSMISI[OÓ]N|FECHA DE GRABACI[OÓ]N|ESCRIBE|ESCRITOR|GUI[OÓ]N|GUION|GUIONISTA|ASESOR|ASESORA|DIRIGE|DIRECTOR|DIRECTORA|DIRECCI[OÓ]N(?: GENERAL)?|REDACCI[OÓ]N|TEMA|REALIZADOR(?:A)?(?:\s*\(A\))?(?:\s*DE\s*SONIDOS?)?|REALIZACI[OÓ]N\s*DE\s*SONIDO|LOCUTOR|LOCUTORA|LOCUCI[OÓ]N|LOC|ANIMADOR|ANIMADORA|PERIODISTA|SECCI[OÓ]N|ACTOR|ACTRIZ|T[ÍI]TULO|FORMATO)$/i);
+            const isCreditLabel = name.match(/^(EMISORA|PROGRAMA|EMISI[OÓ]N|FECHA|FECHA DE TRANSMISI[OÓ]N|FECHA DE GRABACI[OÓ]N|ESCRIBE|ESCRITOR|ESCRITORA|GUI[OÓ]N|GUION|ASESOR|ASESORA|DIRIGE|DIRECTOR|DIRECTORA|DIRECCI[OÓ]N(?: GENERAL)?|REDACCI[OÓ]N|TEMA|REALIZADOR(?:A)?(?:\s*\(A\))?(?:\s*DE\s*SONIDOS?)?|REALIZACI[OÓ]N\s*DE\s*SONIDO|LOCUTOR|LOCUTORA|LOCUCI[OÓ]N|LOC|ANIMADOR|ANIMADORA|PERIODISTA|SECCI[OÓ]N|ACTOR|ACTRIZ|T[ÍI]TULO|FORMATO|NARRACI[OÓ]N|NARRADOR(?:A)?|PRODUCCI[OÓ]N|ELENCO|REPARTO|GRABACI[OÓ]N|COORDINACI[OÓ]N)$/i);
             
             const isSpeakerRole = /^(LOCUTOR|LOCUTORA|LOC|ACTOR|ACTRIZ|ANIMADOR|ANIMADORA|PERIODISTA)$/i.test(name);
 
@@ -266,7 +266,7 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
         // Matcher para créditos
         if (parsingCredits) {
             const creditMatch = flatP.match(/^(?:[\d.-]+\s*|\(\d+\)\s*)?([a-zA-ZÁÉÍÓÚáéíóúñÑ\s\(\)]+):\s*(.*)$/i);
-            const kwMatch = flatP.match(/^(?:[\d.-]+\s*|\(\d+\)\s*)?(EMISORA|PROGRAMA|EMISI[OÓ]N|FECHA(?: DE TRANSMISI[OÓ]N| DE GRABACI[OÓ]N)?|ESCRIBE|ESCRITOR|GUI[OÓ]N|GUION|GUIONISTA|ASESOR|ASESORA|DIRIGE|DIRECTOR|DIRECTORA|DIRECCI[OÓ]N(?: GENERAL)?|TEMA|REALIZADOR(?:A)?(?:\s*\(A\))?(?:\s*DE\s*SONIDOS?)?|REALIZACI[OÓ]N\s*DE\s*SONIDO|LOC(?:UTOR|UTORA|UCI[OÓ]N)?|ANIMADOR|ANIMADORA|PERIODISTA|SECCI[OÓ]N|ACTOR|ACTRIZ|T[ÍI]TULO|FORMATO)(?:[\s:.-]+|$)(.*)$/i);
+            const kwMatch = flatP.match(/^(?:[\d.-]+\s*|\(\d+\)\s*)?(EMISORA|PROGRAMA|EMISI[OÓ]N|FECHA(?: DE TRANSMISI[OÓ]N| DE GRABACI[OÓ]N)?|ESCRIBE|ESCRITOR|ESCRITORA|GUI[OÓ]N|GUION|ASESOR|ASESORA|DIRIGE|DIRECTOR|DIRECTORA|DIRECCI[OÓ]N(?: GENERAL)?|REDACCI[OÓ]N|TEMA|REALIZADOR(?:A)?(?:\s*\(A\))?(?:\s*DE\s*SONIDOS?)?|REALIZACI[OÓ]N\s*DE\s*SONIDO|LOC(?:UTOR|UTORA|UCI[OÓ]N)?|ANIMADOR|ANIMADORA|PERIODISTA|SECCI[OÓ]N|ACTOR|ACTRIZ|T[ÍI]TULO|FORMATO|NARRACI[OÓ]N|NARRADOR(?:A)?|PRODUCCI[OÓ]N|ELENCO|REPARTO|GRABACI[OÓ]N|COORDINACI[OÓ]N)(?:[\s:.-]+|$)(.*)$/i);
 
             if (kwMatch) {
                 // Get original value with tags
@@ -309,20 +309,20 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
         // Párrafo de continuación (si pertenece a la intervención anterior)
         if (!parsingCredits) {
             // Check if it's a misplaced credit label
-            const isCreditLabel = flatP.match(/^(EMISORA|PROGRAMA|EMISI[OÓ]N|FECHA(?: DE TRANSMISI[OÓ]N| DE GRABACI[OÓ]N)?|ESCRIBE|ESCRITOR|GUI[OÓ]N|GUION|ASESOR|ASESORA|DIRIGE|DIRECTOR|DIRECCI[OÓ]N(?: GENERAL)?|TEMA|REALIZADOR(?:A)?(?:\s*\(A\))?(?:\s*DE\s*SONIDOS?)?|REALIZACI[OÓ]N\s*DE\s*SONIDO|LOC(?:UTOR|UTORA|UCI[OÓ]N)?|ANIMADOR|ANIMADORA|PERIODISTA|SECCI[OÓ]N|T[ÍI]TULO|FORMATO)\b[\s:.-]/i);
+            const isCreditLabel = flatP.match(/^(EMISORA|PROGRAMA|EMISI[OÓ]N|FECHA(?: DE TRANSMISI[OÓ]N| DE GRABACI[OÓ]N)?|ESCRIBE|ESCRITOR|ESCRITORA|GUI[OÓ]N|GUION|ASESOR|ASESORA|DIRIGE|DIRECTOR|DIRECTORA|DIRECCI[OÓ]N(?: GENERAL)?|REDACCI[OÓ]N|TEMA|REALIZADOR(?:A)?(?:\s*\(A\))?(?:\s*DE\s*SONIDOS?)?|REALIZACI[OÓ]N\s*DE\s*SONIDO|LOC(?:UTOR|UTORA|UCI[OÓ]N)?|ANIMADOR|ANIMADORA|PERIODISTA|SECCI[OÓ]N|T[ÍI]TULO|FORMATO|NARRACI[OÓ]N|NARRADOR(?:A)?|PRODUCCI[OÓ]N|ELENCO|REPARTO|GRABACI[OÓ]N|COORDINACI[OÓ]N)\b[\s:.-]/i);
             
             if (isCreditLabel) {
                 continue;
             }
 
             if (body.length > 0) {
-                body[body.length - 1].text.push(p);
+                body[body.length - 1].text.push(applyRadioTransformations(p));
             } else {
                body.push({
                    type: 'speaker',
                    identifier: '',
                    speakerName: 'LOCUTOR',
-                   text: [p]
+                   text: [applyRadioTransformations(p)]
                });
             }
         } else {
@@ -346,14 +346,14 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
                     type: 'speaker',
                     identifier: '',
                     speakerName: 'LOCUTOR',
-                    text: [p]
+                    text: [applyRadioTransformations(p)]
                 });
             }
         }
     }
     
     // Normalización final de créditos (Frontis)
-    const normalizedCredits: {label: string, value: string}[] = [];
+    const normalizedCredits: {label: string, value: string, group: string}[] = [];
     const seenLabels = new Set<string>();
 
     const templateOrder = [
@@ -370,25 +370,31 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
     ];
 
     // Helper to find and normalize labels
-    const findAndNormalize = (label: string, value: string) => {
+    const getGroup = (label: string) => {
         let cleanLabel = label.toUpperCase().trim();
-        let cleanValue = value.trim();
+        if (/^(LOCUTOR|LOCUTORA|LOC|LOCUCI[OÓ]N|ANIMADOR|ANIMADORA|PERIODISTA|NARRACI[OÓ]N|NARRADOR|NARRADORA)$/.test(cleanLabel)) return 'LOCUCIÓN';
+        if (/^(ESCRITOR|ESCRITORA|ESCRIBE|GUI[OÓ]N|GUION|REDACCI[OÓ]N)$/.test(cleanLabel)) return 'ESCRIBE';
+        if (/^(ASESOR|ASESORA)$/.test(cleanLabel)) return 'ASESORA';
+        if (/^(DIRECTOR|DIRECTORA|DIRIGE|DIRECCI[OÓ]N|DIRECCI[OÓ]N GENERAL|COORDINACI[OÓ]N)$/.test(cleanLabel)) return 'DIRIGE';
+        if (/^(REALIZADOR|REALIZADORA|REALIZACI[OÓ]N|GRABACI[OÓ]N)/.test(cleanLabel) || cleanLabel.includes('SONIDO')) return 'REALIZACIÓN DE SONIDO';
+        if (/^(PRODUCCI[OÓ]N|ELENCO|REPARTO)$/.test(cleanLabel)) return 'TEMA'; // Group with Theme/General for context if not standard
+        if (/^(FECHA DE TRANSMISI[OÓ]N|FECHA DE GRABACI[OÓ]N|FECHA)$/.test(cleanLabel)) return 'FECHA';
+        if (/^PROGRAMA$/.test(cleanLabel)) return 'PROGRAMA';
+        if (/^EMISI[OÓ]N$/.test(cleanLabel)) return 'EMISIÓN';
+        if (/^EMISORA$/.test(cleanLabel)) return 'EMISORA';
+        if (/^TEMA$/.test(cleanLabel)) return 'TEMA';
+        if (/^REDACCI[OÓ]N$/.test(cleanLabel)) return 'REDACCIÓN';
+        return cleanLabel;
+    };
 
-        if (/^(LOCUTOR|LOCUTORA|LOC|LOCUCI[OÓ]N|ANIMADOR|ANIMADORA|PERIODISTA)$/.test(cleanLabel)) {
-            cleanLabel = 'LOCUCIÓN';
-        } else if (/^(ESCRITOR|ESCRITORA|ESCRIBE|GUI[OÓ]N)$/.test(cleanLabel)) {
-            cleanLabel = 'ESCRIBE';
-        } else if (/^(ASESOR|ASESORA)$/.test(cleanLabel)) {
-            cleanLabel = 'ASESORA';
-        } else if (/^(DIRECTOR|DIRECTORA|DIRIGE|DIRECCI[OÓ]N|DIRECCI[OÓ]N GENERAL)$/.test(cleanLabel)) {
-            cleanLabel = 'DIRIGE';
-        } else if (/^(REALIZADOR|REALIZADORA|REALIZACI[OÓ]N)/.test(cleanLabel) || cleanLabel.includes('SONIDO')) {
-            cleanLabel = 'REALIZACIÓN DE SONIDO';
-        } else if (/^(FECHA DE TRANSMISI[OÓ]N|FECHA DE GRABACI[OÓ]N|FECHA)$/.test(cleanLabel)) {
-            cleanLabel = 'FECHA';
-        }
+    // First, process existing credits
+    const rawCredits = [...credits];
+    credits.forEach(c => {
+        let cleanLabel = c.label.trim();
+        let cleanValue = c.value.trim();
+        const group = getGroup(cleanLabel);
 
-        if (cleanLabel === 'EMISORA') {
+        if (group === 'EMISORA') {
             if (cleanValue.toUpperCase().includes('RADIO CIUDAD MONUMENTO') && !cleanValue.toUpperCase().includes('CMNL')) {
                 cleanValue = 'CMNL RADIO CIUDAD MONUMENTO';
             } else if (!cleanValue || cleanValue === '_________________________') {
@@ -396,16 +402,11 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
             }
         }
         
-        return { label: cleanLabel, value: cleanValue };
-    };
-
-    // First, process existing credits
-    const rawCredits = [...credits];
-    credits.forEach(c => {
-        const normalized = findAndNormalize(c.label, c.value);
-        if (!seenLabels.has(normalized.label)) {
-            normalizedCredits.push(normalized);
-            seenLabels.add(normalized.label);
+        // Preserve the original name in uppercase, except basic spacing fixes.
+        // We track by group so we don't duplicate logic.
+        if (!seenLabels.has(group)) {
+            normalizedCredits.push({ label: cleanLabel, value: cleanValue, group });
+            seenLabels.add(group);
         }
     });
 
@@ -414,20 +415,69 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
         if (!seenLabels.has(label)) {
             let defaultVal = '';
             if (label === 'EMISORA') defaultVal = 'CMNL RADIO CIUDAD MONUMENTO';
-            normalizedCredits.push({ label, value: defaultVal });
+            normalizedCredits.push({ label, value: defaultVal, group: label });
             seenLabels.add(label);
         }
     });
 
     // Sort according to templateOrder
     normalizedCredits.sort((a, b) => {
-        const indexA = templateOrder.indexOf(a.label);
-        const indexB = templateOrder.indexOf(b.label);
+        const indexA = templateOrder.indexOf(a.group);
+        const indexB = templateOrder.indexOf(b.group);
         if (indexA === -1 && indexB === -1) return 0;
         if (indexA === -1) return 1;
         if (indexB === -1) return -1;
         return indexA - indexB;
     });
 
-    return { isMonologo, credits: normalizedCredits, rawCredits, body };
+    return { isMonologo, credits: normalizedCredits.map(c => ({ label: c.label, value: c.value })), rawCredits, body };
+}
+
+const digitToWordMap: { [key: string]: string } = {
+    '0': 'cero', '1': 'uno', '2': 'dos', '3': 'tres', '4': 'cuatro',
+    '5': 'cinco', '6': 'seis', '7': 'siete', '8': 'ocho', '9': 'nueve'
+};
+
+function applyRadioTransformations(text: string): string {
+    // 1. Preserve initial enumeration (e.g., "1. ", "(1) ", "1) ", "1- ")
+    let enumPrefix = "";
+    let mainContent = text;
+    // We look for a number at the start followed by punctuation or parens and space
+    const enumMatch = text.match(/^(\s*(?:\(?\d+\)?[\.\s-]*)\s+)(.*)/);
+    if (enumMatch) {
+        enumPrefix = enumMatch[1];
+        mainContent = enumMatch[2];
+    }
+
+    // 2. Process content piece by piece to respect HTML tags
+    const parts = mainContent.split(/(<[^>]+>)/);
+    for (let i = 0; i < parts.length; i++) {
+        if (!parts[i].startsWith('<')) {
+            let s = parts[i];
+
+            // Rule 1898 -> Mil 898
+            s = s.replace(/\b18(\d{2})\b/g, 'Mil 8$1');
+            
+            // Rule 19xx -> Mil 9xx (implied extension of the 18xx rule)
+            s = s.replace(/\b19(\d{2})\b/g, 'Mil 9$1');
+
+            // Rule 2006 -> Dos Mil Seis (and others 2000-2009)
+            s = s.replace(/\b200([0-9])\b/g, (match, p1) => {
+                if (p1 === '0') return 'Dos Mil'; // 2000
+                const word = digitToWordMap[p1];
+                return `Dos Mil ${word.charAt(0).toUpperCase() + word.slice(1)}`;
+            });
+
+            // Rule 2025 -> Dos Mil 25 (and others 2010-2099)
+            s = s.replace(/\b20([1-9]\d)\b/g, 'Dos Mil $1');
+
+            // Rule 0-9 -> words
+            // Uses negative lookahead/lookbehind to ensure it's a single digit
+            s = s.replace(/(?<![0-9])([0-9])(?![0-9])/g, (match, p1) => digitToWordMap[p1]);
+
+            parts[i] = s;
+        }
+    }
+
+    return enumPrefix + parts.join('');
 }

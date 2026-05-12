@@ -3,7 +3,7 @@ import { Download, Loader2, Mic, RotateCcw, Sparkles, FileText, Upload, Settings
 import { generateDocxFromHtml } from './services/docxService';
 import { RadioScript } from './types';
 import * as mammoth from 'mammoth';
-import { parseScriptWithAI } from './services/deepSeekParser';
+import { parseScriptLocally } from './services/localParser';
 import { normalizeScriptNumbering } from './services/normalizeService';
 import { EditorBlock } from './components/EditorBlock';
 import { EditorToolbar } from './components/EditorToolbar';
@@ -294,29 +294,11 @@ export default function App() {
 
     const targetDocId = docId || activeDocId;
 
-    let data: RadioScript | null = null;
     try {
-      const response = await fetch('/api/ai-parse', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: textToProcess })
-      });
-
-      if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.details || errData.error || "Error en el procesamiento con IA.");
-      }
-
-      data = await response.json();
-    } catch (err: any) {
-      if (targetDocId === activeDocId) setError(err.message || "Error al procesar con IA.");
-      setIsProcessing(false);
-      return;
-    }
-
-    try {
-      if (data) {
-          const normalized = normalizeScriptNumbering(data, formatMode);
+      const localParsedData = parseScriptLocally(textToProcess);
+      
+      if (localParsedData) {
+          const normalized = normalizeScriptNumbering(localParsedData, formatMode);
           const newHtml = scriptDataToHtml(normalized, formatMode);
           
           const autoName = getFileName(normalized).replace('.DOCX', '');
