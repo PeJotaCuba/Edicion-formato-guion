@@ -406,12 +406,9 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
             }
         }
         
-        // Preserve the original name in uppercase, except basic spacing fixes.
-        // We track by group so we don't duplicate logic.
-        if (!seenLabels.has(group)) {
-            normalizedCredits.push({ label: cleanLabel, value: cleanValue, group });
-            seenLabels.add(group);
-        }
+        // Preserve all original entries extracted
+        normalizedCredits.push({ label: cleanLabel, value: cleanValue, group });
+        seenLabels.add(group);
     });
 
     // Ensure all core labels exist exactly as templateOrder
@@ -419,7 +416,9 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
         if (!seenLabels.has(label)) {
             let defaultVal = '';
             if (label === 'EMISORA') defaultVal = 'CMNL RADIO CIUDAD MONUMENTO';
-            normalizedCredits.push({ label, value: defaultVal, group: label });
+            let finalLabel = label;
+            if (label === 'FECHA') finalLabel = 'FECHA DE TRANSMISIÓN';
+            normalizedCredits.push({ label: finalLabel, value: defaultVal, group: label });
             seenLabels.add(label);
         }
     });
