@@ -128,7 +128,7 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
                 // Get original remaining text with tags
                 const headerLength = flatP.length - (soundMatch[3] ? soundMatch[3].length : 0);
                 const originalOffset = getOriginalIndex(p, headerLength);
-                let remainingText = applyRadioTransformations(p.substring(originalOffset).trim());
+                let remainingText = p.substring(originalOffset).trim();
                 
                 body.push({
                     type: 'sound',
@@ -316,7 +316,11 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
             }
 
             if (body.length > 0) {
-                body[body.length - 1].text.push(applyRadioTransformations(p));
+                if (body[body.length - 1].type === 'speaker') {
+                    body[body.length - 1].text.push(applyRadioTransformations(p));
+                } else {
+                    body[body.length - 1].text.push(p);
+                }
             } else {
                body.push({
                    type: 'speaker',

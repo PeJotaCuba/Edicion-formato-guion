@@ -725,7 +725,7 @@ export default function App() {
             {scriptData && (
               <>
                 <span className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-widest bg-slate-100 px-3 py-1.5 rounded border border-slate-200">
-                    Documento: <span className="font-bold text-slate-700">{getFileName(scriptData)}</span>
+                    <span>Documento: </span><span className="font-bold text-slate-700">{getFileName(scriptData)}</span>
                 </span>
                 
                 <div className="flex gap-2">
@@ -847,7 +847,7 @@ export default function App() {
                   className="text-indigo-600 hover:text-indigo-800 flex items-center transition-colors text-[10px] font-bold uppercase tracking-wider"
                 >
                   <RotateCcw className="w-3 h-3 mr-1" />
-                  REINICIAR
+                  <span>REINICIAR</span>
                 </button>
               </div>
               <textarea 
@@ -960,12 +960,12 @@ export default function App() {
               {isProcessing ? (
                 <>
                   <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                  GENERANDO...
+                  <span>GENERANDO...</span>
                 </>
               ) : (
                 <>
                   <Sparkles className="w-5 h-5 mr-2" />
-                  GENERAR FORMATO
+                  <span>GENERAR FORMATO</span>
                 </>
               )}
             </button>
@@ -1137,10 +1137,10 @@ export default function App() {
                             onClick={handleExportBackup}
                             className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 py-2 rounded-lg text-[10px] font-bold flex items-center justify-center transition-colors border border-slate-200"
                         >
-                            <Download className="w-3 h-3 mr-1" /> RESPALDO
+                            <Download className="w-3 h-3 mr-1" /> <span>RESPALDO</span>
                         </button>
                         <label className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 py-2 rounded-lg text-[10px] font-bold flex items-center justify-center transition-colors border border-slate-200 cursor-pointer">
-                            <Upload className="w-3 h-3 mr-1" /> CARGAR
+                            <Upload className="w-3 h-3 mr-1" /> <span>CARGAR</span>
                             <input type="file" accept=".json" onChange={handleImportBackup} className="hidden" />
                         </label>
                     </div>
@@ -1162,7 +1162,7 @@ export default function App() {
                         }`}
                     >
                         <Trash2 className="w-3.5 h-3.5 mr-1.5" /> 
-                        {isClearingStock ? '¿ESTÁS SEGURO? CLIC DE NUEVO' : 'LIMPIAR STOCK'}
+                        <span>{isClearingStock ? '¿ESTÁS SEGURO? CLIC DE NUEVO' : 'LIMPIAR STOCK'}</span>
                     </button>
                 </div>
             )}
@@ -1254,7 +1254,7 @@ export default function App() {
                transform: 'translate(-50%, 0)'
             }}
           >
-            {activeTooltip.text}
+            <span>{activeTooltip.text}</span>
             <div className="absolute top-0 left-1/2 -mt-1 w-2 h-2 bg-slate-800 rotate-45 -translate-x-1/2"></div>
           </div>
       )}

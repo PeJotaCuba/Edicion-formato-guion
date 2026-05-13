@@ -233,7 +233,7 @@ export function InformeModal({ original, current, onClose }: InformeModalProps) 
              className="px-4 py-2 bg-indigo-600 text-white rounded font-bold text-sm flex items-center hover:bg-indigo-700 shadow-sm transition-colors disabled:opacity-50"
           >
             <Download className="w-4 h-4 mr-2" />
-            DESCARGAR
+            <span>DESCARGAR</span>
           </button>
           <button 
              onClick={handleShare} 
@@ -241,10 +241,10 @@ export function InformeModal({ original, current, onClose }: InformeModalProps) 
              className="px-4 py-2 bg-green-600 text-white rounded font-bold text-sm flex items-center hover:bg-green-700 shadow-sm transition-colors disabled:opacity-50"
           >
             <Share2 className="w-4 h-4 mr-2" />
-            COMPARTIR
+            <span>COMPARTIR</span>
           </button>
           <button onClick={onClose} className="px-4 py-2 bg-slate-200 text-slate-700 rounded font-bold text-sm hover:bg-slate-300 transition-colors">
-            CERRAR
+            <span>CERRAR</span>
           </button>
         </div>
       </div>
