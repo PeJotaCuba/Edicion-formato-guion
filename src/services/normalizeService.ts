@@ -96,20 +96,6 @@ export function normalizeScriptNumbering(script: RadioScript, formatMode: 'all' 
             if (formattedItem.text && formattedItem.text.length > 0) {
                formattedItem.text = formattedItem.text.map(t => formatTextForVoice(t));
             }
-
-            if (mergedBody.length > 0) {
-                const lastItem = mergedBody[mergedBody.length - 1];
-                if (lastItem.type === 'speaker' && formattedItem.type === 'speaker') {
-                    const lastCleanName = (lastItem.speakerName || '').toUpperCase().trim();
-                    const currCleanName = (formattedItem.speakerName || '').toUpperCase().trim();
-                    
-                    if (lastCleanName === currCleanName && !isMetadata(lastCleanName)) {
-                        // Merge!
-                        lastItem.text = lastItem.text.concat(formattedItem.text);
-                        return; // Skip adding the current item as a new block
-                    }
-                }
-            }
             mergedBody.push(formattedItem);
         });
         bodyToProcess = mergedBody;

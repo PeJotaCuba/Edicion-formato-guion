@@ -414,12 +414,20 @@ export function parseScriptLocally(inputText: string): RadioScript | null {
     // Ensure all core labels exist exactly as templateOrder
     templateOrder.forEach(label => {
         if (!seenLabels.has(label)) {
-            let defaultVal = '';
+            if (label === 'LOCUCIÓN') return;
+            let defaultVal = '_________________________';
             if (label === 'EMISORA') defaultVal = 'CMNL RADIO CIUDAD MONUMENTO';
             let finalLabel = label;
             if (label === 'FECHA') finalLabel = 'FECHA DE TRANSMISIÓN';
             normalizedCredits.push({ label: finalLabel, value: defaultVal, group: label });
             seenLabels.add(label);
+        }
+    });
+
+    // Replace empty values with underline
+    normalizedCredits.forEach(c => {
+        if (!c.value || c.value.trim() === '') {
+            c.value = '_________________________';
         }
     });
 
@@ -474,9 +482,22 @@ function applyRadioTransformations(text: string): string {
             // Rule 2025 -> Dos Mil 25 (and others 2010-2099)
             s = s.replace(/\b20([1-9]\d)\b/g, 'Dos Mil $1');
 
-            // Rule 0-9 -> words
-            // Uses negative lookahead/lookbehind to ensure it's a single digit
-            s = s.replace(/(?<![0-9])([0-9])(?![0-9])/g, (match, p1) => digitToWordMap[p1]);
+            // Split by parentheses to protect contents that are uppercase
+            const subParts = s.split(/(\([^\)]+\))/);
+            for (let j = 0; j < subParts.length; j++) {
+                if (subParts[j].startsWith('(') && subParts[j].endsWith(')')) {
+                    // Check if it looks like an uppercase instruction e.g. (ANUNCIA MUSICAL 2)
+                    const inside = subParts[j].substring(1, subParts[j].length - 1);
+                    if (inside === inside.toUpperCase()) {
+                        // Keep it as is
+                        continue;
+                    }
+                }
+                
+                // For non-protected parts, apply 0-9 rule
+                subParts[j] = subParts[j].replace(/(?<![0-9])([0-9])(?![0-9])/g, (match, p1) => digitToWordMap[p1]);
+            }
+            s = subParts.join('');
 
             parts[i] = s;
         }
